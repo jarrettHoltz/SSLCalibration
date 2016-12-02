@@ -26,6 +26,10 @@ orangeUpper = (15,255,255)
 pts = deque(maxlen=args["buffer"])
 trackedPoints = []
 
+frame_rate = 142
+start_frame = 0
+end_frame = 0
+
 # if a video path was not supplied, grab the reference
 # to the webcam
 if not args.get("video", False):
@@ -65,6 +69,7 @@ while True:
         cv2.CHAIN_APPROX_SIMPLE)[-2]
     center = None
 
+    trackedPoints.append(None)
     # only proceed if at least one contour was found
     if len(cnts) > 0:
         # find the largest contour in the mask, then use
@@ -73,27 +78,24 @@ while True:
         c = max(cnts, key=cv2.contourArea)
         ((x, y), radius) = cv2.minEnclosingCircle(c)
         M = cv2.moments(c)
-        if(M["m00"] != 0 and M["m00"] != 0):
-            center = (int(M["m10"] / M["m00"]), int(M["m01"] / M["m00"]))
-            trackedPoints.append([center[0],center[1],frameNumber])
-        
         # only proceed if the radius meets a minimum size
-        if radius < 10:
+        if(M["m00"] != 0 and radius < 10):
+            center = (int(M["m10"] / M["m00"]), int(M["m01"] / M["m00"]))
+            trackedPoints[-1] = [center[0],center[1],frameNumber]
             # draw the circle and centroid on the frame,
             # then update the list of tracked points
             cv2.circle(frame, (int(x), int(y)), int(radius),
                 (0, 255, 255), 2)
             cv2.circle(frame, center, 5, (0, 0, 255), -1)
 
-    # update the points queue
-    pts.appendleft(center)
+            # update the points queue
+            pts.appendleft(center)
 
     # loop over the set of tracked points
     for i in range(1, len(pts)):
-        # if either of the tracked points are None, ignore
-        # them
-        if pts[i - 1] is None or pts[i] is None:
-            continue
+        # if either of the tracked points are None, ignore them
+        #if pts[i - 1] is None or pts[i] is None:
+        #    continue
 
         # otherwise, compute the thickness of the line and
         # draw the connecting lines
@@ -102,17 +104,25 @@ while True:
 
     # show the frame to our screen
     cv2.imshow("Frame", frame)
-    key = cv2.waitKey(1) & 0xFF
+    key = cv2.waitKey(0)
 
     if key == ord("p"):
         print(frameNumber)
+    if key == ord("s"):
+        print(frameNumber)
+        start_frame = frameNumber
+    if key == ord("e"):
+        print(frameNumber)
+        end_frame = frameNumber
     # if the 'q' key is pressed, stop the loop
     if key == ord("q"):
         break
 
-f = open('ballLocations.csv', 'w')
-for loc in trackedPoints:
-    f.write(str(loc[0])+','+str(loc[1])+','+str(loc[2])+','+'\n')
+f = open(args["video"]+'.csv', 'w')
+f.write(str(frame_rate)+'\n')
+f.write(str(float(end_frame - start_frame)/float(frame_rate))+'\n')
+for loc in trackedPoints[start_frame:end_frame+1]:
+    f.write(str(loc[0])+','+str(loc[1])+','+str(loc[2]-start_frame)+'\n')
 f.close()
 # cleanup the camera and close any open windows
 camera.release()
