@@ -22,7 +22,7 @@ args = vars(ap.parse_args())
 # ball in the HSV color space, then initialize the
 # list of tracked points
 orangeLower = (0,100,100)
-orangeUpper = (20,255,255)
+orangeUpper = (15,255,255)
 pts = deque(maxlen=args["buffer"])
 trackedPoints = []
 
@@ -76,8 +76,7 @@ while True:
         if(M["m00"] != 0 and M["m00"] != 0):
             center = (int(M["m10"] / M["m00"]), int(M["m01"] / M["m00"]))
             trackedPoints.append([center[0],center[1],frameNumber])
-            if(center[0] == 349 and center[1] == 187):
-                cv2.imwrite("frame%d.jpg" % frameNumber, frame)
+        
         # only proceed if the radius meets a minimum size
         if radius < 10:
             # draw the circle and centroid on the frame,
@@ -105,6 +104,8 @@ while True:
     cv2.imshow("Frame", frame)
     key = cv2.waitKey(1) & 0xFF
 
+    if key == ord("p"):
+        print(frameNumber)
     # if the 'q' key is pressed, stop the loop
     if key == ord("q"):
         break
