@@ -7,14 +7,16 @@
 #include "opencv2/core/core.hpp"
 #include "opencv2/imgproc/imgproc.hpp"
 #include <opencv2/highgui/highgui.hpp>
-
+#include <string>
 #include <fstream>
 #include <cstdio>
+#include "../../../../../cobot/cobot_linux/src/shared/util/helpers.h"
 
 using std::size_t;
 using std::vector;
 using namespace std;
 using Eigen::Vector3d;
+using Eigen::Vector2f;
 
 template <class T> T CalculateR(Eigen::Matrix<T,3,1> point) {
   return T(0);
@@ -115,6 +117,37 @@ struct ReprojectionError {
   const Vector3d world_point;
 };
 
+pair<int, double> LoadImageLocations(const string& tracking_file,
+                       vector<pair<Vector2f, int>>* image_locations) {
+  
+  ScopedFile fid(tracking_file, "r");
+  CHECK_NOTNULL(fid());
+  Vector2f image_point(0, 0);
+  int frame_number = 0;
+  pair<Vector2f, int> frame_info = make_pair(image_point, frame_number);
+
+  int frame_rate = 0;
+  double total_time = 0.0; 
+  //TODO: need code here to read in header, and make it so that the while loop
+  //starts in the correct place (after the header)
+  //TODO: make sure type mismatch doesn't cause problems
+  while (fscanf(fid(), "%d,%d,%d\n", &(image_point(0)), 
+                                     &(image_point(1)), 
+                                     &(frame_number))) {
+    frame_info.first = image_point;
+    frame_info.second = frame_number;
+    image_locations->push_back(frame_info);
+  }
+  pair<int, double> header = make_pair(frame_rate, total_time);
+  return header; 
+}
+
 int main(int argc, char **argv) {
+  if (argc < 3) {
+    cout << "ERROR: need to specify .csv file and trajectory type (drop or toss)"
+         << endl;
+  }
+  
+
   return 0;
 }
