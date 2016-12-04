@@ -120,7 +120,7 @@ while True:
 
 f = open(args["video"]+'.csv', 'w')
 f.write(str(frame_rate)+'\n')
-f.write(str(float(end_frame - start_frame)/float(frame_rate))+'\n')
+f.write(str(end_frame - start_frame)+'\n')
 for loc in trackedPoints[start_frame:end_frame+1]:
     f.write(str(loc[0])+','+str(loc[1])+','+str(loc[2]-start_frame)+'\n')
 f.close()

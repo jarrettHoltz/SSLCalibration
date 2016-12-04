@@ -17,6 +17,26 @@ TARGET_LINK_LIBRARIES(${target}
     fspf_library
     ${OpenCV_LIBRARIES} ${libs})
     
+
+
+SET(target get_ball_world)
+ROSBUILD_ADD_EXECUTABLE(${target}
+    Hmain.cpp)
+ADD_DEPENDENCIES(${target}
+    ceres
+    shared_libraries
+    fspf_library
+    perception_library
+    ${OpenCV_LIBRARIES})
+TARGET_LINK_LIBRARIES(${target}
+    ceres
+    shared_libraries 
+    fspf_library
+    ${OpenCV_LIBRARIES} ${libs})
+
+
+
+
 SET(target ssl_calibration)
 ROSBUILD_ADD_EXECUTABLE(${target}
     ssl_calibration.cpp)
