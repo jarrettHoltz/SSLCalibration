@@ -76,6 +76,11 @@ SET(SHARED_SRCS
   src/shared/util/configreader.cpp
 )
 
+SET(PERCEPTION_SRCS
+  src/perception_tools/perception_2d.cpp
+  #src/delta_calibration/icp.cpp
+)
+
 SET(FSPF_SRCS
   src/fspf/grahams_scan.cpp
   src/fspf/plane_filtering.cpp
@@ -88,3 +93,7 @@ TARGET_LINK_LIBRARIES(shared_libraries shared_libraries ${libs})
 ADD_LIBRARY(fspf_library ${FSPF_SRCS})
 ADD_DEPENDENCIES(fspf_library shared_libraries)
 TARGET_LINK_LIBRARIES(fspf_library shared_libraries ${libs})
+
+# ADD_LIBRARY(perception_library ${PERCEPTION_SRCS})
+# ADD_DEPENDENCIES(perception_library shared_libraries)
+# TARGET_LINK_LIBRARIES(perception_library shared_libraries ${libs})

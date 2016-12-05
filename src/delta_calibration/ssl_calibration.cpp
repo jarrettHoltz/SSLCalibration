@@ -24,11 +24,19 @@ using std::size_t;
 using std::vector;
 using namespace std;
 using Eigen::Vector3d;
+using Eigen::Vector2d;
 using Eigen::Vector2f;
 using Eigen::Vector3f;
 
+bool DoubleEquals(double x, double y) {
+  return fabs(x-y) < .000005;
+}
+
 template <class T> T CalculateR(Eigen::Matrix<T,3,1> point) {
-  return T(0);
+  Eigen::Matrix<T,2,1>point2d;
+  point2d[0] = T(point[0]) / T(point[2]);
+  point2d[1] = T(point[1]) / T(point[2]);
+  return T(point2d.norm());
 }
 
 // Removes distortion based on the opencv model
@@ -71,7 +79,7 @@ template <class T> Eigen::Matrix<T,3,3> BuildIntrinsics(
 
 // Construct a problem using this
 struct ReprojectionError {
-  ReprojectionError(const Vector3d& image_point,
+  ReprojectionError(const Vector2d& image_point,
                     const Vector3d& world_point) :
       image_point(image_point),
       world_point(world_point) {}
@@ -104,27 +112,98 @@ struct ReprojectionError {
     // Apply Intrinsics
     world_point_t = K * world_point_t;
     // The error is the difference between the predicted and observed position.
-    const Eigen::Matrix<T, 3, 1> image_point_t = image_point.cast<T>();
+    const Eigen::Matrix<T, 2, 1> image_point_t = image_point.cast<T>();
     residuals[0] =
-        (world_point_t[0] - image_point_t[0]);
+        (image_point_t[0] - world_point_t[0]);
     residuals[1] =
-        (world_point_t[1] - image_point_t[1]);
-    residuals[2] =
-        (world_point_t[2] - image_point_t[2]);
+        (image_point_t[1] - world_point_t[1]);
     return true;
   }
 
   // Factory to hide the construction of the CostFunction object from
   // the client code.
-  static ceres::CostFunction* Create(const Vector3d& image_point,
+  static ceres::CostFunction* Create(const Eigen::Vector2d& image_point,
                                      const Vector3d& world_point) {
-    return (new ceres::AutoDiffCostFunction<ReprojectionError, 3, 1,1,1,1,1,1,1,4,3>(
+    return (new ceres::AutoDiffCostFunction<ReprojectionError, 2, 1,1,1,1,1,1,1,4,3>(
         new ReprojectionError(image_point, world_point)));
   }
 
-  const Vector3d image_point;
+  const Eigen::Vector2d image_point;
   const Vector3d world_point;
 };
+
+void SSLCalibrate(const vector<pair<Vector2f, int>>& image_locations,
+                  const vector<Vector3d> world_locations,
+                  double* f,
+                  double* px,
+                  double* py,
+                  double* k1,
+                  double* k2,
+                  double* p1,
+                  double* p2,
+                  double* rotation,
+                  double* translation) {
+  
+  // Tolerance for RMSE.
+  static const double kToleranceError = 0.00001;
+  // The maximum number of overall iterations.
+  static const int kMaxIterations = 80;
+  // The maximum number of repeat iterations while the RMSE is unchanged.
+  static const int kMaxRepeatIterations = 5;
+  double rmse = 1000000;
+  double last_rmse = 1000010;
+  vector<double> residuals;
+  
+  // Loop until no longer changes or error is sufficiently small 
+  // (not sure if necessary)
+  for (int iteration = 0, repeat_iteration = 0;
+       iteration < kMaxIterations &&
+       repeat_iteration < kMaxRepeatIterations &&
+       rmse > kToleranceError;
+       ++iteration) {
+    
+    if (DoubleEquals(rmse, last_rmse)) {
+      repeat_iteration++;
+    } else {
+      repeat_iteration = 0;
+    }
+    last_rmse = rmse;
+    
+    // Construct CERES problem
+    ceres::Problem problem;
+    
+    for(size_t i = 0; i < world_locations.size(); i++) {
+      Eigen::Vector2f image_pointf = image_locations[i].first;
+      Eigen::Vector2d image_point = image_pointf.cast<double>();
+      Vector3d world_point = world_locations[i];
+      ceres::CostFunction* cost_function;
+      cost_function = ReprojectionError::Create(image_point, world_point);
+      problem.AddResidualBlock(cost_function,
+                              NULL,
+                              f,
+                              px,
+                              py,
+                              k1,
+                              k2,
+                              p1,
+                              p2,
+                              rotation,
+                              translation);
+      problem.SetParameterBlockConstant(rotation);
+      problem.SetParameterBlockConstant(translation);
+    }
+    
+    ceres::Solver::Options options;
+    options.num_threads = 8;
+    options.num_linear_solver_threads = 8;
+    options.linear_solver_type = ceres::SPARSE_SCHUR;
+    ceres::Solver::Summary summary;
+    ceres::Solve(options, &problem, &summary);
+    rmse =
+        sqrt(summary.final_cost / static_cast<double>(summary.num_residuals));
+    cout << "RMSE: " << rmse << endl;
+  }
+}
 
 // Begin haresh code for finding point of contact in plane
 
@@ -506,15 +585,34 @@ int main(int argc, char **argv) {
   vector<pair<Vector2f, int>> image_locations;
   episode_conditions = LoadImageLocations(argv[1], &image_locations);
 
-  int px = image_locations.back().first(0);
-  int py = image_locations.back().first(1);
-  Vector3d contact_point = getContactPoint(px, py);
+  int p_x = image_locations.back().first(0);
+  int p_y = image_locations.back().first(1);
+  Vector3d contact_point = getContactPoint(p_x, p_y);
 
   vector<Vector3d> world_locations;
   CalculateWorldLocations(episode_conditions, contact_point, &world_locations);
-
-
+  double* extrinsic_rotation = new double[4];
+  double* extrinsic_translation = new double[3];
+  extrinsic_rotation[0] = 0.147620;
+  extrinsic_rotation[1] = 0.988969;
+  extrinsic_rotation[2] = 0.011928;
+  extrinsic_rotation[3] = -0.002536;
+  extrinsic_translation[0] = -2138.434348;
+  extrinsic_translation[1] = -1911.213759;
+  extrinsic_translation[2] = 2707;
+  double f, px, py, k1, k2, p1, p2;
   //TODO: build and solve intrinsic calibration problem
+  SSLCalibrate(image_locations,
+               world_locations,
+               &f,
+               &px,
+               &py,
+               &k1,
+               &k2,
+               &p1,
+               &p2, 
+               extrinsic_rotation,
+               extrinsic_translation);
 
 
   return 0;
