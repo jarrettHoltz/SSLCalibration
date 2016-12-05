@@ -77,6 +77,39 @@ template <class T> Eigen::Matrix<T,3,3> BuildIntrinsics(
   return K;   
 }
 
+Vector2d WorldToImage(Vector3d point,
+                      double f,
+                      double px,
+                      double py,
+                      double k1,
+                      double k2,
+                      double p1,
+                      double p2,
+                      double* rotation,
+                      double* translation) {
+  cout << "World " << endl;
+  cout << point << endl;
+  Eigen::Quaterniond q = Eigen::Quaterniond(rotation[0],rotation[1],rotation[2],rotation[3]);
+  point = q * point;
+  point[0] = point[0] + translation[0];
+  point[1] = point[1] + translation[1];
+  point[2] = point[2] + translation[2];
+  
+  cout << "Extrinsics" << endl;
+  cout << point << endl;
+  double r = CalculateR(point);
+  point = Undistort(point, r, k1, k2, p1, p2);
+  cout << "Undistored" << endl;
+  cout << point << endl;
+  const Eigen::Matrix<double,3,3> K = BuildIntrinsics(f, px, py);
+  point = K * point;
+  cout << "Intrinsics" << endl;
+  cout << point << endl;
+  return (Eigen::Matrix<double, 2, 1>(
+    point[0],
+    point[1]));
+}
+
 // Construct a problem using this
 struct ReprojectionError {
   ReprojectionError(const Vector2d& image_point,
@@ -145,11 +178,11 @@ void SSLCalibrate(const vector<pair<Vector2f, int>>& image_locations,
                   double* translation) {
   
   // Tolerance for RMSE.
-  static const double kToleranceError = 0.00001;
+  static const double kToleranceError = 5;
   // The maximum number of overall iterations.
-  static const int kMaxIterations = 80;
+  static const int kMaxIterations = 100;
   // The maximum number of repeat iterations while the RMSE is unchanged.
-  static const int kMaxRepeatIterations = 5;
+  static const int kMaxRepeatIterations = 20;
   double rmse = 1000000;
   double last_rmse = 1000010;
   vector<double> residuals;
@@ -189,16 +222,28 @@ void SSLCalibrate(const vector<pair<Vector2f, int>>& image_locations,
                               p2,
                               rotation,
                               translation);
-      problem.SetParameterBlockConstant(rotation);
-      problem.SetParameterBlockConstant(translation);
+      if(iteration < 5) {
+        problem.SetParameterBlockConstant(rotation);
+        problem.SetParameterBlockConstant(translation);
+      }
+      if(iteration < 2) {
+        problem.SetParameterBlockConstant(k1);
+        problem.SetParameterBlockConstant(k2);
+        problem.SetParameterBlockConstant(p1);
+        problem.SetParameterBlockConstant(p2);
+      }
     }
     
     ceres::Solver::Options options;
-    options.num_threads = 8;
-    options.num_linear_solver_threads = 8;
-    options.linear_solver_type = ceres::SPARSE_SCHUR;
+    options.linear_solver_type = ceres::DENSE_QR;
+    options.trust_region_strategy_type = ceres::LEVENBERG_MARQUARDT;
+//     options.minimizer_progress_to_stdout = true;
+    options.num_threads = 6;
+    options.num_linear_solver_threads = 6;
+//     options.linear_solver_type = ceres::SPARSE_SCHUR;
     ceres::Solver::Summary summary;
     ceres::Solve(options, &problem, &summary);
+//     std::cout << summary.FullReport() << "\n";
     rmse =
         sqrt(summary.final_cost / static_cast<double>(summary.num_residuals));
     cout << "RMSE: " << rmse << endl;
@@ -523,7 +568,7 @@ pair<int, double> LoadImageLocations(const string& tracking_file,
   int num_frames;
   string full_line;
   string line;
-  stringstream iss;
+  
   fstream stream(tracking_file);
   
   getline(stream, line);
@@ -533,8 +578,10 @@ pair<int, double> LoadImageLocations(const string& tracking_file,
 
   vector<int> raw_data;
   while (getline(stream, full_line)) {
+    stringstream iss;
     iss << full_line;
     while (getline(iss, line, ',')) {
+      cout << stoi(line) << endl;
       raw_data.push_back(stoi(line));
     }
   }
@@ -548,8 +595,9 @@ pair<int, double> LoadImageLocations(const string& tracking_file,
 
     frame_info.first = image_point;
     frame_info.second = frame_number;
-
+    cout << "Here" << endl;
     image_locations->push_back(frame_info);
+    
   }
 
   pair<int, int> header = make_pair(frame_rate, num_frames);
@@ -567,7 +615,7 @@ void CalculateWorldLocations(pair<int, int> episode_conditions,
   for (int i = 0; i < numframes; ++i) {
     world_point.z() = (g/2.0)*(t_f*t_f - (double(i)/double(frame_rate))*(double(i)/double(frame_rate)));
     world_locations->push_back(world_point);
-    cout << world_point << endl;
+//     cout << world_point << endl;
   }
 }
 
@@ -584,7 +632,20 @@ int main(int argc, char **argv) {
   pair<int, int> episode_conditions;
   vector<pair<Vector2f, int>> image_locations;
   episode_conditions = LoadImageLocations(argv[1], &image_locations);
-
+//   for(size_t i = 0; i < image_locations.size(); i++) {
+//     //     Vector2d i_point = WorldToImage(world_locations[i],
+//     //                                     f,
+//     //                                     px,
+//     //                                     py,
+//     //                                     k1,
+//     //                                     k2,
+//     //                                     p1,
+//     //                                     p2, 
+//     //                                     extrinsic_rotation,
+//     //                                     extrinsic_translation);
+//     //     cout << " Projected Point: " << endl <<  i_point << endl;
+//     cout << "Image Point: " << endl << image_locations[i].first << endl << endl;
+//   }
   int p_x = image_locations.back().first(0);
   int p_y = image_locations.back().first(1);
   Vector3d contact_point = getContactPoint(p_x, p_y);
@@ -613,7 +674,20 @@ int main(int argc, char **argv) {
                &p2, 
                extrinsic_rotation,
                extrinsic_translation);
-
-
+  cout << f << " " << px << " " << py << " " << k1 << " " << k2 << " " << p1 << " " << p2 << endl;
+  for(size_t i = 0; i < 5; i++) {
+    Vector2d i_point = WorldToImage(world_locations[i],
+                                    f,
+                                    px,
+                                    py,
+                                    k1,
+                                    k2,
+                                    p1,
+                                    p2, 
+                                    extrinsic_rotation,
+                                    extrinsic_translation);
+    cout << " Projected Point: " << endl <<  i_point << endl;
+    cout << "Image Point: " << endl << image_locations[i].first << endl << endl;
+  }
   return 0;
 }
