@@ -27,6 +27,7 @@ using Eigen::Vector3d;
 using Eigen::Vector2d;
 using Eigen::Vector2f;
 using Eigen::Vector3f;
+using namespace cv;
 
 bool DoubleEquals(double x, double y) {
   return fabs(x-y) < .000005;
@@ -48,19 +49,25 @@ template <class T> Eigen::Matrix<T,3,1> Undistort(
     T p1,
     T p2) {
   
-  T x = point[0];
-  T y = point[1];
+  T x = point[0] / point[2];
+  T y = point[1] / point[2];
   
-  x = x * (T(1)+(k1*pow(r,2)) + (k2 * pow(r,4)));
-  y = y * (T(1)+(k1*pow(r,2)) + (k2 * pow(r,4)));
+  T x_1 = x * (T(1)+k1*(r*r) + k2 * (r * r * r * r));
+  T y_1 = y * (T(1)+k1*(r*r) + k2 * (r * r * r * r));
+//   cout << "Y_term: " << y_term << endl;
   
-  x = x + (T(2)*p1*x*y + p2 * (pow(r,2) + T(2) * pow(x,2)));
-  y = y + (p1 *(pow(r,2) + T(2) * pow(y,2)) + T(2) * p2 * x * y);
-  
+  x =  x_1;
+  y = y_1;
+/*  
+ T x_1 = x + (T(2)*p1*x*y + p2 * ((r*r) + T(2) * (x*x)));
+ T y_1 = y + (p1 * ((r*r) + T(2) * (y*y)) + T(2) * p2 * x * y);
+//   cout << "Y_term: " << y_term << endl;
+  x = x_1;
+  y = y_1;*/
   return (Eigen::Matrix<T, 3, 1>(
     x,
     y,
-    point[2]));    
+    T(1)));    
 }
 
 // Build the instrinc camera matrix from parameters
@@ -73,7 +80,6 @@ template <class T> Eigen::Matrix<T,3,3> BuildIntrinsics(
   K << f,    T(0), px,
        T(0), f,    py,
        T(0), T(0), T(1);
-       
   return K;   
 }
 
@@ -87,30 +93,29 @@ Vector2d WorldToImage(Vector3d point,
                       double p2,
                       double* rotation,
                       double* translation) {
-  cout << "World " << endl;
-  cout << point << endl;
+//   cout << "World " << endl;
+//   cout << point << endl;
   Eigen::Quaterniond q = Eigen::Quaterniond(rotation[0],rotation[1],rotation[2],rotation[3]);
   point = q * point;
   point[0] = point[0] + translation[0];
   point[1] = point[1] + translation[1];
   point[2] = point[2] + translation[2];
   
-  cout << "Extrinsics" << endl;
-  cout << point << endl;
+//   cout << "Extrinsics" << endl;
+//   cout << point << endl;
   double r = CalculateR(point);
   point = Undistort(point, r, k1, k2, p1, p2);
-  cout << "Undistored" << endl;
-  cout << point << endl;
+//   cout << "Undistored" << endl;
+//   cout << point << endl;
   const Eigen::Matrix<double,3,3> K = BuildIntrinsics(f, px, py);
   point = K * point;
-  cout << "Intrinsics" << endl;
-  cout << point << endl;
+//   cout << "Intrinsics" << endl;
+//   cout << point << endl;
   return (Eigen::Matrix<double, 2, 1>(
     point[0],
     point[1]));
 }
 
-// Construct a problem using this
 struct ReprojectionError {
   ReprojectionError(const Vector2d& image_point,
                     const Vector3d& world_point) :
@@ -129,6 +134,7 @@ struct ReprojectionError {
                   const T* const translation,
                   T* residuals) const {
                     
+
     // Transform by extrinstic matrix transform=
     T point_t[] = {T(world_point.x()), T(world_point.y()), T(world_point.z())};
     Eigen::Matrix<T, 3, 1> world_point_t;
@@ -192,7 +198,7 @@ void SSLCalibrate(const vector<pair<Vector2f, int>>& image_locations,
   for (int iteration = 0, repeat_iteration = 0;
        iteration < kMaxIterations &&
        repeat_iteration < kMaxRepeatIterations &&
-       rmse > kToleranceError;
+       rmse > kToleranceError || iteration < 4;
        ++iteration) {
     
     if (DoubleEquals(rmse, last_rmse)) {
@@ -222,20 +228,23 @@ void SSLCalibrate(const vector<pair<Vector2f, int>>& image_locations,
                               p2,
                               rotation,
                               translation);
-      if(iteration < 5) {
         problem.SetParameterBlockConstant(rotation);
         problem.SetParameterBlockConstant(translation);
-      }
+
+        
+        problem.SetParameterLowerBound(f, 0, 0);
       if(iteration < 2) {
         problem.SetParameterBlockConstant(k1);
         problem.SetParameterBlockConstant(k2);
         problem.SetParameterBlockConstant(p1);
         problem.SetParameterBlockConstant(p2);
+        
       }
     }
     
     ceres::Solver::Options options;
     options.linear_solver_type = ceres::DENSE_QR;
+    options.minimizer_type = ceres::TRUST_REGION;
     options.trust_region_strategy_type = ceres::LEVENBERG_MARQUARDT;
 //     options.minimizer_progress_to_stdout = true;
     options.num_threads = 6;
@@ -531,18 +540,17 @@ Eigen::Vector3d getContactPoint(int px, int py) {
 
     std::cout << "Unit Testing of estimated intrinsics:\n";
     UnitTesting(intrinsics[0], intrinsics[1], intrinsics[2]);
-
     //Point where ball touches the field
     //Eigen::Vector2d knownImagePoint(554,306);
     Eigen::Vector2d knownImagePoint(px, py);
 
     Eigen::Vector3d estimatedWorldLocation = getWorldPosition(quaternion,translation,intrinsics[0],
                                                      Eigen::Vector2d(intrinsics[1], intrinsics[2]), knownImagePoint);
-    std::cout << "Estimated World Location of "
-              << "(" << knownImagePoint.x() << "," << knownImagePoint.y() << ")"
-              << ":\n(" << estimatedWorldLocation.x() << ","
-              << estimatedWorldLocation.y() << "," << estimatedWorldLocation.z()
-              << ")\n";
+//     std::cout << "Estimated World Location of "
+//               << "(" << knownImagePoint.x() << "," << knownImagePoint.y() << ")"
+//               << ":\n(" << estimatedWorldLocation.x() << ","
+//               << estimatedWorldLocation.y() << "," << estimatedWorldLocation.z()
+//               << ")\n";
 
     Eigen::Vector3d estimated_world_coordinates(estimatedWorldLocation.x(),
                                                 estimatedWorldLocation.y(),
@@ -550,6 +558,97 @@ Eigen::Vector3d getContactPoint(int px, int py) {
 
     return estimated_world_coordinates;
 }
+
+void Visualize(const char* filePath,
+               double f,
+               double px, double py,
+               double k1, double k2,
+               double p1, double p2,
+               double* rotation, double* translation) {
+  
+  Mat image;
+  image = imread( filePath, 1 );
+  
+  if ( !image.data ) {
+    printf("No image data \n");
+    return;
+  }
+  
+  //x_i,y_i...
+  double imagePoints[] = {18,500,951,518,813,61,163,49};
+  //x_w,y_w...
+  double worldPoints[] = {0,-2960,4550,-2960,4550,0,0,0};
+  for(size_t i = 0; i < 4; i++) {
+    Vector3d wp(worldPoints[i*2], worldPoints[i*2+1],0);
+    Vector2d i_point = WorldToImage(wp,
+                                    f, px, py,
+                                    k1, k2, p1, p2,
+                                    rotation,
+                                    translation);
+    cout << "Actual: " << imagePoints[i*2] << "," << imagePoints[i*2+1] << endl;
+    circle(image,Point(i_point.x(),i_point.y()),5,Scalar(0,0,255));
+    circle(image,Point(i_point.x(),i_point.y()),2,Scalar(255,0,0));
+  }
+  
+  
+  //Find projection of points on lines
+  //(0,0) --> (0,-2960)
+  double wx = 0, wy= 0;
+  while(wy > -2960) {
+    Vector3d wp(wx, wy,0);
+    Vector2d i_point = WorldToImage(wp,
+                                    f, px, py,
+                                    k1, k2, p1, p2,
+                                    rotation,
+                                    translation);
+    circle(image,Point(i_point.x(),i_point.y()),3,Scalar(0,0,255));
+    circle(image,Point(i_point.x(),i_point.y()),2,Scalar(255,0,0));
+    wy = wy - 10;
+  }
+  //(0,0) --> (4550,0)
+  wx = 0, wy= 0;
+  while(wx < 4550) {
+    Vector3d wp(wx, wy,0); 
+    Vector2d i_point = WorldToImage(wp,
+                                    f, px, py,
+                                    k1, k2, p1, p2,
+                                    rotation,
+                                    translation);
+    circle(image,Point(i_point.x(),i_point.y()),3,Scalar(0,0,255));
+    circle(image,Point(i_point.x(),i_point.y()),2,Scalar(255,0,0));
+    wx = wx + 10;
+  }
+  //(0,-2960) --> (4550,-2960)
+  wx = 0, wy= -2960;
+  while(wx < 4550) {
+    Vector3d wp(wx, wy,0);
+    Vector2d i_point = WorldToImage(wp,
+                                    f, px, py,
+                                    k1, k2, p1, p2,
+                                    rotation,
+                                    translation);
+    circle(image,Point(i_point.x(),i_point.y()),3,Scalar(0,0,255));
+    circle(image,Point(i_point.x(),i_point.y()),2,Scalar(255,0,0));
+    wx = wx + 10;
+  }
+  //(4550,0) --> (4550,-2960)
+  wx = 4550, wy= 0;
+  while(wy >= -2960) {
+    Vector3d wp(wx, wy,0);
+    Vector2d i_point = WorldToImage(wp,
+                                    f, px, py,
+                                    k1, k2, p1, p2,
+                                    rotation,
+                                    translation);
+    circle(image,Point(i_point.x(),i_point.y()),3,Scalar(0,0,255));
+    circle(image,Point(i_point.x(),i_point.y()),2,Scalar(255,0,0));
+    wy = wy - 10;
+  }
+  
+  namedWindow("Display Image", WINDOW_AUTOSIZE );
+  imshow("Display Image", image);
+  waitKey(0);
+               }
 
 // End haresh code for finding point of contact in plane
 
@@ -621,6 +720,76 @@ void CalculateWorldLocations(pair<int, int> episode_conditions,
 
 // End samer code for loading csv file and computing set of world points
 
+void getTestImagePoints(vector<pair<Vector2f, int>> *image_locations, vector<Vector3d> *world_locations) {
+  //x_i,y_i...
+  double imagePoints[] = {18,500,951,518,813,61,163,49};
+  //x_w,y_w...
+  double worldPoints[] = {0,-2960,4550,-2960,4550,0,0,0};
+  double focalLength = 402.546386; 
+  double pX = 467.818228; 
+  double pY = 318.845535;
+  double rotation[] = {0.147620,0.988969,0.011928,-0.002536};
+  double translation[] = {-2138.434348,-1911.213759,2707};
+  for(int i = 0; i < 4; ++i) {
+    std::pair<Vector2f,int> temp;
+    temp.first = Vector2f(imagePoints[2*i],imagePoints[2*i+1]);
+    temp.second = 1;
+    image_locations->push_back(temp);
+    world_locations->push_back(Vector3d(worldPoints[2*i],worldPoints[2*i+1],0));
+    WorldToImage(Vector3d(worldPoints[2*i],worldPoints[2*i+1],0),
+                 focalLength,
+                 pX,
+                 pY,
+                 0,
+                 0,
+                 0,
+                 0,
+                 rotation,
+                 translation);
+    cout << "Actual: " << Vector2f(imagePoints[2*i],imagePoints[2*i+1]) << endl;
+  }
+}
+
+double GetZ(int frame_number, double max_time, double frame_rate, double accel) {
+  double z = accel/2 * ((max_time * max_time) - pow((frame_number / frame_rate),2));
+  return z;
+}
+
+void GenerateBallDrop(vector<pair<Vector2f, int>> *image_locations, vector<Vector3d> *world_locations) {
+  double StartPoint[] = {2000,-1500};
+  double focalLength = 402.546386; 
+  double pX = 467.818228; 
+  double pY = 318.845535;
+  double rotation[] = {0.147620,0.988969,0.011928,-0.002536};
+  double translation[] = {-2138.434348,-1911.213759,2707};
+  double g = 9.81;
+  double k1 = 0, k2 = .03, p1 = 0, p2 = 0;
+  int max_frames = 100;
+  double frame_rate = 142;
+  for(int i = 0; i < max_frames; ++i) {
+    double z = GetZ(max_frames - i,  max_frames / frame_rate, frame_rate,g);
+    std::pair<Vector2f,int> temp;
+    Vector2d image_point = WorldToImage(Vector3d(StartPoint[0],StartPoint[1],z),
+                                        focalLength,
+                                        pX,
+                                        pY,
+                                        k1,
+                                        k2,
+                                        p1,
+                                        p2,
+                                        rotation,
+                                        translation);
+    cout << Vector3d(StartPoint[0],StartPoint[1],z) << endl;
+    temp.first = image_point.cast<float>();
+    temp.second = (max_frames - i);
+    image_locations->push_back(temp);
+    world_locations->push_back(Vector3d(StartPoint[0],StartPoint[1],z));
+  }
+  Visualize("newField.jpg",
+            focalLength, pX, pY, k1,k2,p1,p2,
+            rotation, translation);
+}
+
 int main(int argc, char **argv) {
   if (argc < 3) {
     cout << "ERROR: need to specify .csv file and trajectory type (drop or toss)"
@@ -629,9 +798,10 @@ int main(int argc, char **argv) {
   
   google::InitGoogleLogging(argv[0]);
 
-  pair<int, int> episode_conditions;
-  vector<pair<Vector2f, int>> image_locations;
+  pair<int, int> episode_conditions, episode_conditions2;
+  vector<pair<Vector2f, int>> image_locations, image_locations2;
   episode_conditions = LoadImageLocations(argv[1], &image_locations);
+//   episode_conditions2 = LoadImageLocations(argv[2], &image_locations2);
 //   for(size_t i = 0; i < image_locations.size(); i++) {
 //     //     Vector2d i_point = WorldToImage(world_locations[i],
 //     //                                     f,
@@ -649,9 +819,16 @@ int main(int argc, char **argv) {
   int p_x = image_locations.back().first(0);
   int p_y = image_locations.back().first(1);
   Vector3d contact_point = getContactPoint(p_x, p_y);
-
-  vector<Vector3d> world_locations;
+//   p_x = image_locations2.back().first(0);
+//   p_y = image_locations2.back().first(1);
+//   Vector3d contact_point2 = getContactPoint(p_x, p_y);
+  cout << "Contact Point: " << contact_point << endl;
+//   cout << "Contact Poitn2: " << contact_point2 << endl;
+  vector<Vector3d> world_locations, world_locations2;
   CalculateWorldLocations(episode_conditions, contact_point, &world_locations);
+//   CalculateWorldLocations(episode_conditions2, contact_point2, &world_locations2);
+//   world_locations.insert(std::end(world_locations), std::begin(world_locations2), std::end(world_locations2));
+//   image_locations.insert(std::end(image_locations), std::begin(image_locations2), std::end(image_locations2));
   double* extrinsic_rotation = new double[4];
   double* extrinsic_translation = new double[3];
   extrinsic_rotation[0] = 0.147620;
@@ -662,9 +839,17 @@ int main(int argc, char **argv) {
   extrinsic_translation[1] = -1911.213759;
   extrinsic_translation[2] = 2707;
   double f, px, py, k1, k2, p1, p2;
+  f = px = py = k1 = k2 = p1 = p2 = 0;
+  
+  vector<pair<Vector2f, int>> testImageLocations;
+  vector<Vector3d> testWorldLocations;
+  GenerateBallDrop(&testImageLocations,&testWorldLocations);
+  
+//   world_locations.insert(std::end(world_locations), std::begin(testWorldLocations), std::end(testWorldLocations));
+//   image_locations.insert(std::end(image_locations), std::begin(testImageLocations), std::end(testImageLocations));
   //TODO: build and solve intrinsic calibration problem
-  SSLCalibrate(image_locations,
-               world_locations,
+  SSLCalibrate(testImageLocations,
+               testWorldLocations,
                &f,
                &px,
                &py,
@@ -674,20 +859,27 @@ int main(int argc, char **argv) {
                &p2, 
                extrinsic_rotation,
                extrinsic_translation);
-  cout << f << " " << px << " " << py << " " << k1 << " " << k2 << " " << p1 << " " << p2 << endl;
-  for(size_t i = 0; i < 5; i++) {
-    Vector2d i_point = WorldToImage(world_locations[i],
-                                    f,
-                                    px,
-                                    py,
-                                    k1,
-                                    k2,
-                                    p1,
-                                    p2, 
-                                    extrinsic_rotation,
-                                    extrinsic_translation);
-    cout << " Projected Point: " << endl <<  i_point << endl;
-    cout << "Image Point: " << endl << image_locations[i].first << endl << endl;
-  }
-  return 0;
+
+//   for(size_t i = 0; i < 2; i++) {
+//     Vector2d i_point = WorldToImage(world_locations[i],
+//                                     f,
+//                                     px,
+//                                     py,
+//                                     k1,
+//                                     k2,
+//                                     p1,
+//                                     p2, 
+//                                     extrinsic_rotation,
+//                                     extrinsic_translation);
+//     cout << " Projected Point: " << endl <<  i_point << endl;
+//     cout << "Image Point: " << endl << image_locations[i].first << endl << endl;
+//   }
+  
+   Visualize("newField.jpg",
+             f, px, py, k1, k2, p1,p2,
+             extrinsic_rotation, extrinsic_translation);
+   
+   cout << "Intrinsics and Distortion: " << f << " " << px << " " << py << " " << k1 << " " << k2 << " " << p1 << " " << p2 << endl;
+   return 0;
+   
 }
