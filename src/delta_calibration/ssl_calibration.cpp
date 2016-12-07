@@ -10,6 +10,7 @@
 #include <fstream>
 #include <iostream>
 #include <cstdio>
+#include <random>
 
 using ceres::AutoDiffCostFunction;
 using ceres::CostFunction;
@@ -681,8 +682,14 @@ void GenerateBallDrop(vector<pair<Vector2d, int>> *image_locations, vector<Vecto
     double StartPointX[] = {2000,100,4000};
     double StartPointY[] = {-1500,-100,-250};
     
+    std::default_random_engine generator;
+    std::normal_distribution<double> distribution(0.0,2.0);
+    
     for(int pt = 0; pt < 3; ++pt) {
         for(int i = 0; i < max_frames; ++i) {
+            double x_noise = distribution(generator);
+            double y_noise = distribution(generator);
+            cout << "x_noise: " << x_noise << " Y_noise: " << y_noise << endl;
             double z = GetZ(max_frames - i,  max_frames / frame_rate, frame_rate,g);
             std::pair<Vector2d,int> temp;
             Vector2d image_point = WorldToImage(Vector3d(StartPointX[pt],StartPointY[pt],z),
@@ -696,6 +703,8 @@ void GenerateBallDrop(vector<pair<Vector2d, int>> *image_locations, vector<Vecto
                                                 rotation,
                                                 translation);
             //cout << Vector3d(StartPointX[pt],StartPointY[pt],z) << endl;
+            image_point[0] += x_noise;
+            image_point[1] += y_noise;
             temp.first = image_point;
             temp.second = (max_frames - i);
             image_locations->push_back(temp);
@@ -703,9 +712,10 @@ void GenerateBallDrop(vector<pair<Vector2d, int>> *image_locations, vector<Vecto
         }
     }
     cout << "Generating ball drop visualization..." << endl;
-    Visualize("../newField.jpg",
+    Visualize("newField.jpg",
               focalLength, pX, pY, k1,k2,p1,p2,
               rotation, translation);
+    
 }
 
 int main(int argc, char **argv) {
@@ -761,7 +771,7 @@ int main(int argc, char **argv) {
                  extrinsic_translation);
     
     cout << "Generating visualization for estimated parameters..." << endl;
-    Visualize("../newField.jpg",
+    Visualize("newField.jpg",
               f, px, py, k1, k2, p1,p2,
               extrinsic_rotation, extrinsic_translation);
     
