@@ -26,6 +26,7 @@ using Eigen::Vector2f;
 using Eigen::Vector3f;
 using namespace cv;
 
+#define BALL_DROPS 4
 void Visualize(const char* filePath,
                double f,
                double px, double py,
@@ -117,9 +118,15 @@ Vector2d WorldToImage(Vector3d point,
 
 struct ReprojectionError {
     ReprojectionError(const Vector2d& image_point,
-                      const Vector3d& world_point) :
+                      const Vector3d& world_point,
+                      const int id,
+                      const double* const rotation,
+                      const double* const translation) :
     image_point(image_point),
-    world_point(world_point) {}
+    world_point(world_point),
+    id(id),
+    rotation(rotation),
+    translation(translation){}
     
     template <class T>
     bool operator()(const T* const f,
@@ -129,21 +136,24 @@ struct ReprojectionError {
                     const T* const k2,
                     const T* const p1,
                     const T* const p2,
-                    const T* const rotation,
-                    const T* const translation,
                     const T* const alpha,
+                    const T* const beta,
                     T* residuals) const {
         
         // Transform by extrinstic matrix transform=
-        T point_t[] = {T(world_point.x()) + alpha[0], T(world_point.y() + alpha[1]), T(world_point.z())};
+        //T point_t[] = {alpha[id], beta[id], T(world_point.z())};
+        T point_t[] = {T(world_point.x()), T(world_point.y()), T(world_point.z())};
+        T rot[] = {T(rotation[0]), T(rotation[1]), T(rotation[2]), T(rotation[3])};
+        T trans[] = {T(translation[0]), T(translation[1]), T(translation[2])};
         Eigen::Matrix<T, 3, 1> world_point_t;
         T transformed_point[3];
-        ceres::QuaternionRotatePoint(rotation, point_t, transformed_point);
-        transformed_point[0] = transformed_point[0] + translation[0];
-        transformed_point[1] = transformed_point[1] + translation[1];
-        transformed_point[2] = transformed_point[2] + translation[2];
+        ceres::QuaternionRotatePoint(rot, point_t, transformed_point);
+        transformed_point[0] = transformed_point[0] + trans[0];
+        transformed_point[1] = transformed_point[1] + trans[1];
+        transformed_point[2] = transformed_point[2] + trans[2];
         world_point_t << transformed_point[0], transformed_point[1], transformed_point[2];
-        // Undistort
+        
+        // Distort
         world_point_t = Distort(world_point_t, k1[0], k2[0], p1[0], p2[0]);
         const Eigen::Matrix<T,3,3> K = BuildIntrinsics(f[0], px[0], py[0]);
         // Apply Intrinsics
@@ -160,13 +170,19 @@ struct ReprojectionError {
     // Factory to hide the construction of the CostFunction object from
     // the client code.
     static ceres::CostFunction* Create(const Eigen::Vector2d& image_point,
-                                       const Vector3d& world_point) {
-        return (new ceres::AutoDiffCostFunction<ReprojectionError, 2, 1,1,1,1,1,1,1,4,3,2>(
-                                                                                           new ReprojectionError(image_point, world_point)));
+                                       const Vector3d& world_point,
+                                       const int id,
+                                       const double* const rotation,
+                                       const double* const translation) {
+        return (new ceres::AutoDiffCostFunction<ReprojectionError, 2,1,1,1,1,1,1,1,BALL_DROPS,BALL_DROPS>(
+                                                                                                          new ReprojectionError(image_point, world_point, id, rotation, translation)));
     }
     
     const Eigen::Vector2d image_point;
     const Vector3d world_point;
+    const int id;
+    const double* const rotation;
+    const double* const translation;
 };
 
 void SSLCalibrate(const vector<pair<Vector2d, int>>& image_locations,
@@ -180,7 +196,8 @@ void SSLCalibrate(const vector<pair<Vector2d, int>>& image_locations,
                   double* p2,
                   double* rotation,
                   double* translation,
-                  double* alpha) {
+                  double* alpha,
+                  double* beta) {
     
     // Tolerance for RMSE.
     static const double kToleranceError = 5;
@@ -212,9 +229,10 @@ void SSLCalibrate(const vector<pair<Vector2d, int>>& image_locations,
         
         for(size_t i = 0; i < world_locations.size(); i++) {
             Eigen::Vector2d image_point = image_locations[i].first;
+            int id = image_locations[i].second;
             Vector3d world_point = world_locations[i];
             ceres::CostFunction* cost_function;
-            cost_function = ReprojectionError::Create(image_point, world_point);
+            cost_function = ReprojectionError::Create(image_point, world_point, id, rotation, translation);
             problem.AddResidualBlock(cost_function,
                                      NULL,
                                      f,
@@ -224,18 +242,17 @@ void SSLCalibrate(const vector<pair<Vector2d, int>>& image_locations,
                                      k2,
                                      p1,
                                      p2,
-                                     rotation,
-                                     translation,
-                                     alpha);
-            problem.SetParameterBlockConstant(rotation);
-            problem.SetParameterBlockConstant(translation);
+                                     alpha,
+                                     beta);
             
             problem.SetParameterLowerBound(f, 0, 0);
             
-            problem.SetParameterUpperBound(alpha, 0, 100);
-            problem.SetParameterLowerBound(alpha, 0, -100);
-            problem.SetParameterUpperBound(alpha, 1, 100);
-            problem.SetParameterLowerBound(alpha, 1, -100);
+            for(int drop = 0; drop < BALL_DROPS; ++drop) {
+                problem.SetParameterUpperBound(alpha, drop, 5000);
+                problem.SetParameterLowerBound(alpha, drop, 0);
+                problem.SetParameterUpperBound(beta, drop, 0);
+                problem.SetParameterLowerBound(beta, drop, -3000);
+            }
             
             if(iteration < 2) {
                 problem.SetParameterBlockConstant(k1);
@@ -243,6 +260,7 @@ void SSLCalibrate(const vector<pair<Vector2d, int>>& image_locations,
                 problem.SetParameterBlockConstant(p1);
                 problem.SetParameterBlockConstant(p2);
                 problem.SetParameterBlockConstant(alpha);
+                problem.SetParameterBlockConstant(beta);
             }
         }
         
@@ -257,8 +275,7 @@ void SSLCalibrate(const vector<pair<Vector2d, int>>& image_locations,
         ceres::Solver::Summary summary;
         ceres::Solve(options, &problem, &summary);
         //     std::cout << summary.FullReport() << "\n";
-        rmse =
-        sqrt(summary.final_cost / static_cast<double>(summary.num_residuals));
+        rmse = sqrt(summary.final_cost / static_cast<double>(summary.num_residuals));
         cout << "RMSE: " << rmse << endl;
     }
 }
@@ -691,22 +708,22 @@ void GenerateBallDrop(vector<pair<Vector2d, int>> *image_locations, vector<Vecto
     int max_frames = 100;
     double frame_rate = 142;
     
-    double StartPointX[] = {2000,100,4000};
-    double StartPointY[] = {-1500,-100,-250};
+    double StartPointX[] = {2000,100,4000,3500};
+    double StartPointY[] = {-1500,-100,-250,-1000};
     
     std::default_random_engine generator;
     std::normal_distribution<double> distribution(0.0,5.0);
     bool isNoise = false;
-    for(int pt = 0; pt < 3; ++pt) {
+    for(int pt = 0; pt < BALL_DROPS; ++pt) {
         for(int i = 0; i < max_frames; ++i) {
-            double x_noise = distribution(generator);
-            double y_noise = distribution(generator);
-            if (isNoise == false) {
-                x_noise = 0;
-                y_noise = 0;
-            } else {
+            double x_noise = 0;
+            double y_noise = 0;
+            if (isNoise) {
+                x_noise = distribution(generator);
+                y_noise = distribution(generator);
                 cout << "x_noise: " << x_noise << " Y_noise: " << y_noise << endl;
             }
+            
             double z = GetZ(max_frames - i,  max_frames / frame_rate, frame_rate,g);
             std::pair<Vector2d,int> temp;
             Vector2d image_point = WorldToImage(Vector3d(StartPointX[pt],StartPointY[pt],z),
@@ -723,7 +740,7 @@ void GenerateBallDrop(vector<pair<Vector2d, int>> *image_locations, vector<Vecto
             image_point[0] += x_noise;
             image_point[1] += y_noise;
             temp.first = image_point;
-            temp.second = (max_frames - i);
+            temp.second = pt;
             image_locations->push_back(temp);
             world_locations->push_back(Vector3d(StartPointX[pt],StartPointY[pt],z));
         }
@@ -780,7 +797,8 @@ int main(int argc, char **argv) {
     vector<Vector3d> testWorldLocations;
     GenerateBallDrop(&testImageLocations,&testWorldLocations);
     
-    double alpha[2] =  {0,0};
+    double *alpha = new double[BALL_DROPS];
+    double *beta = new double[BALL_DROPS];
     SSLCalibrate(testImageLocations,
                  testWorldLocations,
                  &f,
@@ -792,14 +810,24 @@ int main(int argc, char **argv) {
                  &p2,
                  extrinsic_rotation,
                  extrinsic_translation,
-                 alpha);
+                 alpha,
+                 beta);
     
+    for(int drop = 0; drop < BALL_DROPS; ++drop) {
+        alpha[drop] = 100;
+        beta[drop] = -100;
+    }
     cout << "Generating visualization for estimated parameters..." << endl;
     Visualize("../simImage.jpg",
               f, px, py, k1, k2, p1,p2,
               extrinsic_rotation, extrinsic_translation,Scalar(255,255,255),2);
     
-    cout << "Intrinsics and Distortion: " << f << " " << px << " " << py << " " << k1 << " " << k2 << " " << p1 << " " << p2 << endl;
-    cout << "Alpha:" << alpha[0] << "," << alpha[1] << endl;
+    cout << "Intrinsics and Distortion: " << f << " " << px << " " << py << " "
+    << k1 << " " << k2 << " " << p1 << " " << p2 << endl;
+    cout << "(alpha,beta):" << endl;
+    for(int drop = 0; drop < BALL_DROPS; ++drop) {
+        cout << alpha[drop*2] << "," << alpha[drop*21] << endl;
+    }
+    
     return 0;
 }
