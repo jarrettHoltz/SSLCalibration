@@ -141,8 +141,8 @@ struct ReprojectionError {
                     T* residuals) const {
         
         // Transform by extrinstic matrix transform=
-        //T point_t[] = {alpha[id], beta[id], T(world_point.z())};
-        T point_t[] = {T(world_point.x()), T(world_point.y()), T(world_point.z())};
+        T point_t[] = {/*T(world_point.x()) + */alpha[id], /*T(world_point.y())*/ + beta[id], T(world_point.z())};
+//         T point_t[] = {T(world_point.x()), T(world_point.y()), T(world_point.z())};
         T rot[] = {T(rotation[0]), T(rotation[1]), T(rotation[2]), T(rotation[3])};
         T trans[] = {T(translation[0]), T(translation[1]), T(translation[2])};
         Eigen::Matrix<T, 3, 1> world_point_t;
@@ -174,7 +174,7 @@ struct ReprojectionError {
                                        const int id,
                                        const double* const rotation,
                                        const double* const translation) {
-        return (new ceres::AutoDiffCostFunction<ReprojectionError, 2,1,1,1,1,1,1,1,BALL_DROPS,BALL_DROPS>(
+      return (new ceres::AutoDiffCostFunction<ReprojectionError, 2,1,1,1,1,1,1,1,BALL_DROPS,BALL_DROPS>(
                                                                                                           new ReprojectionError(image_point, world_point, id, rotation, translation)));
     }
     
@@ -226,7 +226,8 @@ void SSLCalibrate(const vector<pair<Vector2d, int>>& image_locations,
         
         // Construct CERES problem
         ceres::Problem problem;
-        
+        double* v_i;
+        double* z_0;
         for(size_t i = 0; i < world_locations.size(); i++) {
             Eigen::Vector2d image_point = image_locations[i].first;
             int id = image_locations[i].second;
@@ -243,7 +244,8 @@ void SSLCalibrate(const vector<pair<Vector2d, int>>& image_locations,
                                      p1,
                                      p2,
                                      alpha,
-                                     beta);
+                                     beta
+                                    );
             
             problem.SetParameterLowerBound(f, 0, 0);
             
@@ -253,14 +255,20 @@ void SSLCalibrate(const vector<pair<Vector2d, int>>& image_locations,
                 problem.SetParameterUpperBound(beta, drop, 0);
                 problem.SetParameterLowerBound(beta, drop, -3000);
             }
-            
+//             
             if(iteration < 2) {
-                problem.SetParameterBlockConstant(k1);
-                problem.SetParameterBlockConstant(k2);
-                problem.SetParameterBlockConstant(p1);
-                problem.SetParameterBlockConstant(p2);
-                problem.SetParameterBlockConstant(alpha);
-                problem.SetParameterBlockConstant(beta);
+//                 problem.SetParameterBlockConstant(alpha);
+//                 problem.SetParameterBlockConstant(beta);
+//                 problem.SetParameterBlockConstant(f);
+//                 problem.SetParameterBlockConstant(px);
+//                 problem.SetParameterBlockConstant(py);
+                
+            }
+            if(iteration < 3) {
+              problem.SetParameterBlockConstant(k1);
+              problem.SetParameterBlockConstant(k2);
+              problem.SetParameterBlockConstant(p1);
+              problem.SetParameterBlockConstant(p2);
             }
         }
         
@@ -799,6 +807,10 @@ int main(int argc, char **argv) {
     
     double *alpha = new double[BALL_DROPS];
     double *beta = new double[BALL_DROPS];
+    for(int drop = 0; drop < BALL_DROPS; ++drop) {
+      alpha[drop] = 1000;
+      beta[drop] = -1000;
+    }
     SSLCalibrate(testImageLocations,
                  testWorldLocations,
                  &f,
@@ -813,10 +825,7 @@ int main(int argc, char **argv) {
                  alpha,
                  beta);
     
-    for(int drop = 0; drop < BALL_DROPS; ++drop) {
-        alpha[drop] = 100;
-        beta[drop] = -100;
-    }
+    
     cout << "Generating visualization for estimated parameters..." << endl;
     Visualize("../simImage.jpg",
               f, px, py, k1, k2, p1,p2,
@@ -826,7 +835,7 @@ int main(int argc, char **argv) {
     << k1 << " " << k2 << " " << p1 << " " << p2 << endl;
     cout << "(alpha,beta):" << endl;
     for(int drop = 0; drop < BALL_DROPS; ++drop) {
-        cout << alpha[drop*2] << "," << alpha[drop*21] << endl;
+        cout << alpha[drop] << "," << beta[drop] << endl;
     }
     
     return 0;
