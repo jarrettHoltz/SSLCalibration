@@ -10,7 +10,6 @@
 #include <fstream>
 #include <iostream>
 #include <cstdio>
-#include <chrono>
 #include <random>
 
 using ceres::AutoDiffCostFunction;
@@ -692,11 +691,22 @@ void GenerateBallDrop(vector<pair<Vector2d, int>> *image_locations, vector<Vecto
     int max_frames = 100;
     double frame_rate = 142;
     
-    double StartPointX[] = {2000,100,4000,1450};
-    double StartPointY[] = {-1500,-100,-250,-3200};
-    int min = 0;
-    for(int pt = 0; pt < 4; ++pt) {
+    double StartPointX[] = {2000,100,4000};
+    double StartPointY[] = {-1500,-100,-250};
+    
+    std::default_random_engine generator;
+    std::normal_distribution<double> distribution(0.0,5.0);
+    bool isNoise = false;
+    for(int pt = 0; pt < 3; ++pt) {
         for(int i = 0; i < max_frames; ++i) {
+            double x_noise = distribution(generator);
+            double y_noise = distribution(generator);
+            if (isNoise == false) {
+                x_noise = 0;
+                y_noise = 0;
+            } else {
+                cout << "x_noise: " << x_noise << " Y_noise: " << y_noise << endl;
+            }
             double z = GetZ(max_frames - i,  max_frames / frame_rate, frame_rate,g);
             std::pair<Vector2d,int> temp;
             Vector2d image_point = WorldToImage(Vector3d(StartPointX[pt],StartPointY[pt],z),
@@ -710,6 +720,8 @@ void GenerateBallDrop(vector<pair<Vector2d, int>> *image_locations, vector<Vecto
                                                 rotation,
                                                 translation);
             //cout << Vector3d(StartPointX[pt],StartPointY[pt],z) << endl;
+            image_point[0] += x_noise;
+            image_point[1] += y_noise;
             temp.first = image_point;
             temp.second = (max_frames - i);
             image_locations->push_back(temp);
@@ -768,20 +780,6 @@ int main(int argc, char **argv) {
     vector<Vector3d> testWorldLocations;
     GenerateBallDrop(&testImageLocations,&testWorldLocations);
     
-    double noiseVariance = 5;
-    // construct a trivial random generator engine from a time-based seed:
-    unsigned seed = std::chrono::system_clock::now().time_since_epoch().count();
-    std::default_random_engine generator (seed);
-    std::normal_distribution<double> distribution (0.0,noiseVariance);
-    double noise = 0;
-    for(unsigned long long i = 0; i < testWorldLocations.size(); ++i) {
-        Vector2d temp = testImageLocations.at(i).first;
-        Vector2d noiseV = Vector2d(distribution(generator), distribution(generator));
-        noise += noiseV.norm();
-        testImageLocations.at(i).first = temp + noiseV;
-    }
-    noise = noise / testWorldLocations.size();
-    cout << "Noise:" << noise << endl;
     double alpha[2] =  {0,0};
     SSLCalibrate(testImageLocations,
                  testWorldLocations,
