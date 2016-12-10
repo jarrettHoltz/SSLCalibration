@@ -129,20 +129,22 @@ struct ReprojectionError {
     translation(translation){}
     
     template <class T>
-    bool operator()(const T* const f,
-                    const T* const px,
-                    const T* const py,
+    bool operator()(const T* const intrinsics,
                     const T* const k1,
                     const T* const k2,
                     const T* const p1,
                     const T* const p2,
                     const T* const alpha,
                     const T* const beta,
+                    const T* const gamma,
                     T* residuals) const {
         
         // Transform by extrinstic matrix transform=
-        T point_t[] = {/*T(world_point.x()) + */alpha[id], /*T(world_point.y())*/ + beta[id], T(world_point.z())};
-//         T point_t[] = {T(world_point.x()), T(world_point.y()), T(world_point.z())};
+        T point_t[] = {/*T(world_point.x()) + */alpha[id],
+            /*T(world_point.y())*/ + beta[id],
+            T(world_point.z()) + gamma[id]};
+        
+        //         T point_t[] = {T(world_point.x()), T(world_point.y()), T(world_point.z())};
         T rot[] = {T(rotation[0]), T(rotation[1]), T(rotation[2]), T(rotation[3])};
         T trans[] = {T(translation[0]), T(translation[1]), T(translation[2])};
         Eigen::Matrix<T, 3, 1> world_point_t;
@@ -155,7 +157,7 @@ struct ReprojectionError {
         
         // Distort
         world_point_t = Distort(world_point_t, k1[0], k2[0], p1[0], p2[0]);
-        const Eigen::Matrix<T,3,3> K = BuildIntrinsics(f[0], px[0], py[0]);
+        const Eigen::Matrix<T,3,3> K = BuildIntrinsics(intrinsics[0], intrinsics[1], intrinsics[2]);
         // Apply Intrinsics
         world_point_t = K * world_point_t;
         // The error is the difference between the predicted and observed position.
@@ -174,8 +176,8 @@ struct ReprojectionError {
                                        const int id,
                                        const double* const rotation,
                                        const double* const translation) {
-      return (new ceres::AutoDiffCostFunction<ReprojectionError, 2,1,1,1,1,1,1,1,BALL_DROPS,BALL_DROPS>(
-                                                                                                          new ReprojectionError(image_point, world_point, id, rotation, translation)));
+        return (new ceres::AutoDiffCostFunction<ReprojectionError, 2,3,1,1,1,1,BALL_DROPS,BALL_DROPS,BALL_DROPS>(
+                                                                                                                 new ReprojectionError(image_point, world_point, id, rotation, translation)));
     }
     
     const Eigen::Vector2d image_point;
@@ -187,9 +189,7 @@ struct ReprojectionError {
 
 void SSLCalibrate(const vector<pair<Vector2d, int>>& image_locations,
                   const vector<Vector3d> world_locations,
-                  double* f,
-                  double* px,
-                  double* py,
+                  double* intrinsics,
                   double* k1,
                   double* k2,
                   double* p1,
@@ -197,7 +197,8 @@ void SSLCalibrate(const vector<pair<Vector2d, int>>& image_locations,
                   double* rotation,
                   double* translation,
                   double* alpha,
-                  double* beta) {
+                  double* beta,
+                  double* gamma) {
     
     // Tolerance for RMSE.
     static const double kToleranceError = 5;
@@ -236,39 +237,40 @@ void SSLCalibrate(const vector<pair<Vector2d, int>>& image_locations,
             cost_function = ReprojectionError::Create(image_point, world_point, id, rotation, translation);
             problem.AddResidualBlock(cost_function,
                                      NULL,
-                                     f,
-                                     px,
-                                     py,
+                                     intrinsics,
                                      k1,
                                      k2,
                                      p1,
                                      p2,
                                      alpha,
-                                     beta
-                                    );
+                                     beta,
+                                     gamma
+                                     );
             
-            problem.SetParameterLowerBound(f, 0, 0);
+            problem.SetParameterLowerBound(intrinsics, 0, 0);
             
             for(int drop = 0; drop < BALL_DROPS; ++drop) {
                 problem.SetParameterUpperBound(alpha, drop, 5000);
                 problem.SetParameterLowerBound(alpha, drop, 0);
                 problem.SetParameterUpperBound(beta, drop, 0);
                 problem.SetParameterLowerBound(beta, drop, -3000);
+                problem.SetParameterUpperBound(gamma, drop, 50);
+                problem.SetParameterLowerBound(gamma, drop, -50);
             }
-//             
+            //
             if(iteration < 2) {
-//                 problem.SetParameterBlockConstant(alpha);
-//                 problem.SetParameterBlockConstant(beta);
-//                 problem.SetParameterBlockConstant(f);
-//                 problem.SetParameterBlockConstant(px);
-//                 problem.SetParameterBlockConstant(py);
+                //                 problem.SetParameterBlockConstant(alpha);
+                //                 problem.SetParameterBlockConstant(beta);
+                //                 problem.SetParameterBlockConstant(f);
+                //                 problem.SetParameterBlockConstant(px);
+                //                 problem.SetParameterBlockConstant(py);
                 
             }
             if(iteration < 3) {
-              problem.SetParameterBlockConstant(k1);
-              problem.SetParameterBlockConstant(k2);
-              problem.SetParameterBlockConstant(p1);
-              problem.SetParameterBlockConstant(p2);
+                problem.SetParameterBlockConstant(k1);
+                problem.SetParameterBlockConstant(k2);
+                problem.SetParameterBlockConstant(p1);
+                problem.SetParameterBlockConstant(p2);
             }
         }
         
@@ -475,8 +477,7 @@ Eigen::Vector3d getContactPoint(int px, int py) {
         Eigen::Vector2d wP(worldPoints[i*2], worldPoints[i*2+1]);
         
         CostFunction* cost_function =
-        new AutoDiffCostFunction<IntrinsicEstimator, 2, 3>(new
-                                                           IntrinsicEstimator(quaternion,translation,dIp,wP));
+        new AutoDiffCostFunction<IntrinsicEstimator, 2, 3>(new IntrinsicEstimator(quaternion,translation,dIp,wP));
         
         problem.AddResidualBlock(cost_function, NULL, intrinsics);
     }
@@ -798,8 +799,9 @@ int main(int argc, char **argv) {
     extrinsic_translation[0] = -2138.434348;
     extrinsic_translation[1] = -1911.213759;
     extrinsic_translation[2] = 2707;
-    double f, px, py, k1, k2, p1, p2;
-    f = px = py = k1 = k2 = p1 = p2 = 0;
+    double intrinsics[] = {0, 0, 0};
+    double k1, k2, p1, p2;
+    k1 = k2 = p1 = p2 = 0;
     
     vector<pair<Vector2d, int>> testImageLocations;
     vector<Vector3d> testWorldLocations;
@@ -807,15 +809,15 @@ int main(int argc, char **argv) {
     
     double *alpha = new double[BALL_DROPS];
     double *beta = new double[BALL_DROPS];
+    double *gamma = new double[BALL_DROPS];
     for(int drop = 0; drop < BALL_DROPS; ++drop) {
-      alpha[drop] = 1000;
-      beta[drop] = -1000;
+        alpha[drop] = 1000;
+        beta[drop] = -1000;
+        gamma[drop] = -20;
     }
     SSLCalibrate(testImageLocations,
                  testWorldLocations,
-                 &f,
-                 &px,
-                 &py,
+                 intrinsics,
                  &k1,
                  &k2,
                  &p1,
@@ -823,19 +825,21 @@ int main(int argc, char **argv) {
                  extrinsic_rotation,
                  extrinsic_translation,
                  alpha,
-                 beta);
+                 beta,
+                 gamma);
     
     
     cout << "Generating visualization for estimated parameters..." << endl;
     Visualize("../simImage.jpg",
-              f, px, py, k1, k2, p1,p2,
+              intrinsics[0], intrinsics[1], intrinsics[2], k1, k2, p1,p2,
               extrinsic_rotation, extrinsic_translation,Scalar(255,255,255),2);
     
-    cout << "Intrinsics and Distortion: " << f << " " << px << " " << py << " "
+    cout << "Intrinsics and Distortion: " << intrinsics[0] << " "
+    << intrinsics[1] << " " << intrinsics[2] << " "
     << k1 << " " << k2 << " " << p1 << " " << p2 << endl;
-    cout << "(alpha,beta):" << endl;
+    cout << "(alpha,beta,gamma):" << endl;
     for(int drop = 0; drop < BALL_DROPS; ++drop) {
-        cout << alpha[drop] << "," << beta[drop] << endl;
+        cout << alpha[drop] << "," << beta[drop] << "," << gamma[drop] << endl;
     }
     
     return 0;
