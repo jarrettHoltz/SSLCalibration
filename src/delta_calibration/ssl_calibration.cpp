@@ -32,7 +32,7 @@ void Visualize(const char* filePath,
                double px, double py,
                double k1, double k2,
                double p1, double p2,
-               double* rotation, double* translation,Scalar color,double radius = 3);
+               double* rotation, double* translation, vector<Vector3d> world_points, Scalar color, double radius = 3);
 
 bool DoubleEquals(double x, double y) {
     return fabs(x-y) < .000005;
@@ -117,11 +117,11 @@ Vector2d WorldToImage(Vector3d point,
 }
 
 template <class T> T GetFallZ(T frame_num, T frame_rate, T z_0, T v_i) {
-  T z = z_0 + v_i * (frame_num / frame_rate) + (T(1)/T(2)) * T(-9.8) * ((frame_num / frame_rate) * (frame_num / frame_rate));
+  T z = z_0 + v_i * (frame_num / frame_rate) + (T(1)/T(2)) * T(-9800) * ((frame_num / frame_rate) * (frame_num / frame_rate));
 //   cout << z << endl;
 //   cout << v_i * (frame_num / frame_rate) << endl;
 //   cout << (T(1)/T(2)) * T(-9.82) * ((frame_num / frame_rate) * (frame_num / frame_rate)) << endl;
-  return z;
+  return z; // Temporarily converting to mm
 }
 
 template <class T> T GetXY(T frame_num, T frame_rate, T xy_0, T v_i) {
@@ -167,14 +167,15 @@ struct ReprojectionError {
                     const T* const beta,
                     const T* const z_0,
                     const T* const v_0,
+                    const T* const t_0,
                     T* residuals) const {
         
         // Transform by extrinstic matrix transform=
         T point_t[] = {
-          T(world_point.x()),           
-//           GetXY(T(frame_num), T(frame_rate),alpha[0], alpha[1]),
-          T(world_point.y()),
-//           GetXY(T(frame_num), T(frame_rate),beta[0], beta[1]),
+//           T(world_point.x()),           
+          GetXY(T(frame_num), T(frame_rate),alpha[0], alpha[1]),
+//           T(world_point.y()),
+          GetXY(T(frame_num), T(frame_rate),beta[0], beta[1]),
 //             T(world_point.z())}; 
           GetFallZ(T(frame_num), T(frame_rate), z_0[id], v_0[id])
  
@@ -214,7 +215,7 @@ struct ReprojectionError {
                                        const int frame_rate,
                                        const double* const rotation,
                                        const double* const translation) {
-        return (new ceres::AutoDiffCostFunction<ReprojectionError, 2,3,1,1,1,1,2,2,BALL_DROPS,BALL_DROPS>(
+        return (new ceres::AutoDiffCostFunction<ReprojectionError, 2,3,1,1,1,1,2,2,BALL_DROPS,BALL_DROPS, BALL_DROPS>(
                                                                                                                  new ReprojectionError(image_point, world_point, id, frame_num, frame_rate, rotation, translation)));
     }
     
@@ -245,7 +246,7 @@ void SSLCalibrate(const vector<pair<Vector2d, int>>& image_locations,
                  ) {
     
     // Tolerance for RMSE.
-    static const double kToleranceError = .5;
+    static const double kToleranceError = 0;
     // The maximum number of overall iterations.
     static const int kMaxIterations = 100;
     // The maximum number of repeat iterations while the RMSE is unchanged.
@@ -289,7 +290,8 @@ void SSLCalibrate(const vector<pair<Vector2d, int>>& image_locations,
                                      alphas[id],
                                      betas[id],
                                      z_0,
-                                     v_0
+                                     v_0,
+                                     t_0
                                      );
             
             problem.SetParameterLowerBound(intrinsics, 0, 0);
@@ -304,29 +306,33 @@ void SSLCalibrate(const vector<pair<Vector2d, int>>& image_locations,
 //             problem.SetParameterBlockConstant(betas[id]);
             for(int drop = 0; drop < BALL_DROPS; ++drop) {
                 
-                problem.SetParameterUpperBound(z_0, drop, 5000);
+                problem.SetParameterUpperBound(z_0, drop, 10);
                 problem.SetParameterLowerBound(z_0, drop, 0);
                 problem.SetParameterUpperBound(v_0, drop, 0);
                 
             }
             //
             if(iteration < 2) {
-                                
-                //                 problem.SetParameterBlockConstant(f);
-                //                 problem.SetParameterBlockConstant(px);
-                //                 problem.SetParameterBlockConstant(py);
-              problem.SetParameterBlockConstant(k1);
-              problem.SetParameterBlockConstant(k2);
-              problem.SetParameterBlockConstant(p1);
-              problem.SetParameterBlockConstant(p2);
+//               problem.SetParameterBlockConstant(alphas[id]);
+//                           problem.SetParameterBlockConstant(betas[id]);
+//                                 problem.SetParameterBlockConstant(intrinsics);
+//                                 problem.SetParameterBlockConstant(px);
+//                                 problem.SetParameterBlockConstant(py);
+              
                 
             }
             
             if(iteration < 3) {
+              problem.SetParameterBlockConstant(k1);
+              problem.SetParameterBlockConstant(k2);
+              problem.SetParameterBlockConstant(p1);
+              problem.SetParameterBlockConstant(p2);
               
-              problem.SetParameterBlockConstant(z_0);
 //                 
                 
+            }
+            if(iteration < 4) {
+              problem.SetParameterBlockConstant(z_0);
             }
             if(iteration < 5) {
               problem.SetParameterBlockConstant(v_0);
@@ -585,6 +591,7 @@ void Visualize(const char* filePath,
                double k1, double k2,
                double p1, double p2,
                double* rotation, double* translation,
+               vector<Vector3d> world_points,
                Scalar color,double radius) {
     
     Mat image;
@@ -594,6 +601,16 @@ void Visualize(const char* filePath,
     if ( !image.data ) {
         printf("No image data \n");
         return;
+    }
+    
+    for(size_t i = 0; i < world_points.size(); ++i) {
+      Vector3d wp = world_points[i];
+      Vector2d i_point = WorldToImage(wp,
+                                      f, px, py,
+                                      k1, k2, p1, p2,
+                                      rotation,
+                                      translation);
+      circle(image,Point(i_point.x(),i_point.y()),radius,color);
     }
     
     //Find projection of points on lines
@@ -754,14 +771,14 @@ void getTestImagePoints(vector<pair<Vector2d, int>> *image_locations, vector<Vec
                      translation);
         cout << "Actual: " << Vector2f(imagePoints[2*i],imagePoints[2*i+1]) << endl;
     }
-    Visualize("../newField.jpg",
-              focalLength, pX, pY, 0, 0, 0, 0,
-              rotation, translation,Scalar(0,0,255));
+//     Visualize("../newField.jpg",
+//               focalLength, pX, pY, 0, 0, 0, 0,
+//               rotation, translation,worldPoints,Scalar(0,0,255));
 }
 
 double GetZ(int frame_number, double max_time, double frame_rate, double accel) {
-    double z = accel/2 * ((max_time * max_time) - pow((frame_number / frame_rate),2));
-    return z;
+  double z = accel/2 * pow((max_time - (frame_number / frame_rate)),2);
+    return z; // Temporarily converting meters to mm
 }
 
 void GenerateBallDrop(vector<pair<Vector2d, int>> *image_locations, vector<Vector3d> *world_locations) {
@@ -771,19 +788,19 @@ void GenerateBallDrop(vector<pair<Vector2d, int>> *image_locations, vector<Vecto
     double pY = 318.845535;
     double rotation[] = {0.147620,0.988969,0.011928,-0.002536};
     double translation[] = {-2138.434348,-1911.213759,2707};
-    double g = 9.8;
+    double g = 9800;
     double k1 = 0.05 , k2 = .02, p1 = -0.01, p2 = 0.01;
-    int max_frames = 100;
+    double max_frames = 70;
     double frame_rate = 142;
-    
-    double StartPointX[] = {2000,100,4000,3500};
-    double StartPointY[] = {-1500,-100,-250,-1000};
+    cout << "TIME: " << max_frames / frame_rate << endl;
+    double StartPointX[] = {2000,100,4000,3500, 500};
+    double StartPointY[] = {-1500,-100,-250,-1000, -700};
     
     std::default_random_engine generator;
     std::normal_distribution<double> distribution(0.0,5.0);
     bool isNoise = false;
     for(int pt = 0; pt < BALL_DROPS; ++pt) {
-        for(int i = 0; i < max_frames; ++i) {
+        for(int i = 0; i < max_frames + 1; ++i) {
             double x_noise = 0;
             double y_noise = 0;
             if (isNoise) {
@@ -792,8 +809,8 @@ void GenerateBallDrop(vector<pair<Vector2d, int>> *image_locations, vector<Vecto
                 cout << "x_noise: " << x_noise << " Y_noise: " << y_noise << endl;
             }
             
-            double z = GetZ(max_frames - i,  max_frames / frame_rate, frame_rate,g);
-            
+            double greatest_z = GetZ(0,  max_frames / frame_rate, frame_rate,g);
+            double z = GetFallZ(double(i), frame_rate, greatest_z, 0.0);
             std::pair<Vector2d,int> temp;
             Vector2d image_point = WorldToImage(Vector3d(StartPointX[pt],StartPointY[pt],z),
                                                 focalLength,
@@ -812,9 +829,9 @@ void GenerateBallDrop(vector<pair<Vector2d, int>> *image_locations, vector<Vecto
             temp.second = pt;
             image_locations->push_back(temp);
             world_locations->push_back(Vector3d(StartPointX[pt],StartPointY[pt],z));
-            if (i > -1) { 
+            if (pt <  1) { 
               cout << "Last z: " << (*world_locations)[i * (pt + 1)] << endl;
-              cout << "Calculated z: " << GetFallZ(100.0 - i, 142.0, 2.43036, 0.0) << endl;
+              cout << "Calculated z: " << GetFallZ(double(i), 142.0, greatest_z, 0.0) << endl;
             }
         }
     }
@@ -826,7 +843,7 @@ void GenerateBallDrop(vector<pair<Vector2d, int>> *image_locations, vector<Vecto
     
     Visualize("../simImage.jpg",
               focalLength, pX, pY, k1,k2,p1,p2,
-              rotation, translation,Scalar(0,0,255),5);
+              rotation, translation,*world_locations, Scalar(0,0,255),5);
 }
 
 int main(int argc, char **argv) {
@@ -879,19 +896,19 @@ int main(int argc, char **argv) {
     
     double *v_0 = new double[BALL_DROPS];
     double *z_0 = new double[BALL_DROPS];
-    double* t_0 = new double[1];
-    t_0[0] = 0;
+    double* t_0 = new double[BALL_DROPS];
     for(int drop = 0; drop < BALL_DROPS; ++drop) {
         double *alpha = new double[2];
         double *beta = new double[2];
-        alpha[0] = 1000;
-        beta[0] = -1000;
+        alpha[0] = 0;
+        beta[0] = 0;
         alpha[1] = 0;
         beta[1] = 0;
         alphas.push_back(alpha);
         betas.push_back(beta);
         z_0[drop] = 0;
         v_0[drop] = 0;
+        t_0[drop] = 0;
     }
     
     SSLCalibrate(testImageLocations,
@@ -914,7 +931,7 @@ int main(int argc, char **argv) {
     cout << "Generating visualization for estimated parameters..." << endl;
     Visualize("../simImage.jpg",
               intrinsics[0], intrinsics[1], intrinsics[2], k1, k2, p1,p2,
-              extrinsic_rotation, extrinsic_translation,Scalar(255,255,255),2);
+              extrinsic_rotation, extrinsic_translation, testWorldLocations, Scalar(255,255,255),2);
     
     cout << "Intrinsics and Distortion: " << intrinsics[0] << " "
     << intrinsics[1] << " " << intrinsics[2] << " "
