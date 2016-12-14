@@ -27,6 +27,8 @@ using Eigen::Vector3f;
 using namespace cv;
 
 #define BALL_DROPS 4
+#define MAX_FRAMES 96
+
 void Visualize(const char* filePath,
                double f,
                double px, double py,
@@ -117,27 +119,21 @@ Vector2d WorldToImage(Vector3d point,
 }
 
 template <class T> T GetFallZ(T frame_num, T frame_rate, T z_0, T v_i) {
-  T z = z_0 + v_i * (frame_num / frame_rate) + (T(1)/T(2)) * T(-9800) * ((frame_num / frame_rate) * (frame_num / frame_rate));
-//   cout << z << endl;
-//   cout << v_i * (frame_num / frame_rate) << endl;
-//   cout << (T(1)/T(2)) * T(-9.82) * ((frame_num / frame_rate) * (frame_num / frame_rate)) << endl;
-  return z; // Temporarily converting to mm
+  T z = z_0 + v_i * (frame_num / frame_rate) + (T(1)/T(2)) * T(-9800) * 
+((frame_num / frame_rate) * (frame_num / frame_rate));
+  return z; 
 }
 
 template <class T> T GetXY(T frame_num, T frame_rate, T xy_0, T v_i) {
   v_i = T(0);
   T xy =  xy_0 + v_i * (frame_num / frame_rate);
-  //   cout << z << endl;
-  //   cout << v_i * (frame_num / frame_rate) << endl;
-  //   cout << (T(1)/T(2)) * T(-9.82) * ((frame_num / frame_rate) * (frame_num / frame_rate)) << endl;
   return xy;
 }
 
 void TestGetFallZ(vector<Vector3d> world) {
-  for(int i = 0; i < world.size() - 1; i++) {
-    double z = GetFallZ(double((i + 1) % 100), 142.0, 2.43036, 0.0);
-    cout << "Calculated: " << z << " Original: " << world[i][2] << endl;
-    cout << world.size() << endl;
+  for(size_t i = 0; i < world.size() - 1; i++) {
+//     double z = GetFallZ(double(i % 100) , 142.0, 2381.71, 0.0);
+    
   }
 }
 
@@ -174,14 +170,12 @@ struct ReprojectionError {
         T point_t[] = {
 //           T(world_point.x()),           
           GetXY(T(frame_num), T(frame_rate),alpha[0], alpha[1]),
-//           T(world_point.y()),
-          GetXY(T(frame_num), T(frame_rate),beta[0], beta[1]),
-//             T(world_point.z())}; 
-          GetFallZ(T(frame_num), T(frame_rate), z_0[id], v_0[id])
- 
-        };
+          T(world_point.y()),
+//           GetXY(T(frame_num), T(frame_rate),beta[0], beta[1]),
+          GetFallZ(T(frame_num), T(frame_rate), z_0[id], v_0[id])};
+//           T(world_point.z())};
+
         
-        //         T point_t[] = {T(world_point.x()), T(world_point.y()), T(world_point.z())};
         T rot[] = {T(rotation[0]), T(rotation[1]), T(rotation[2]), T(rotation[3])};
         T trans[] = {T(translation[0]), T(translation[1]), T(translation[2])};
         Eigen::Matrix<T, 3, 1> world_point_t;
@@ -248,7 +242,7 @@ void SSLCalibrate(const vector<pair<Vector2d, int>>& image_locations,
     // Tolerance for RMSE.
     static const double kToleranceError = 0;
     // The maximum number of overall iterations.
-    static const int kMaxIterations = 100;
+    static const int kMaxIterations = 10000;
     // The maximum number of repeat iterations while the RMSE is unchanged.
     static const int kMaxRepeatIterations = 5;
     double rmse = 1000000;
@@ -258,9 +252,10 @@ void SSLCalibrate(const vector<pair<Vector2d, int>>& image_locations,
     // Loop until no longer changes or error is sufficiently small
     // (not sure if necessary)
     for (int iteration = 0, repeat_iteration = 0;
-         iteration < kMaxIterations &&
+         (iteration < kMaxIterations &&
          repeat_iteration < kMaxRepeatIterations &&
-         rmse > kToleranceError || iteration < 6;
+         rmse > kToleranceError) || 
+         iteration < 6;
          ++iteration) {
         
         if (DoubleEquals(rmse, last_rmse)) {
@@ -272,14 +267,13 @@ void SSLCalibrate(const vector<pair<Vector2d, int>>& image_locations,
         
         // Construct CERES problem
         ceres::Problem problem;
-//         double* v_i;
-//         double* z_0;
         for(size_t i = 0; i < world_locations.size() - 1; i++) {
             Eigen::Vector2d image_point = image_locations[i].first;
             int id = image_locations[i].second;
             Vector3d world_point = world_locations[i];
             ceres::CostFunction* cost_function;
-            cost_function = ReprojectionError::Create(image_point, world_point, id, ((i + 1) % 100), frame_rate, rotation, translation);
+            cost_function = ReprojectionError::Create(image_point, world_point, 
+                id, (i % MAX_FRAMES), frame_rate, rotation, translation);
             problem.AddResidualBlock(cost_function,
                                      NULL,
                                      intrinsics,
@@ -291,50 +285,30 @@ void SSLCalibrate(const vector<pair<Vector2d, int>>& image_locations,
                                      betas[id],
                                      z_0,
                                      v_0,
-                                     t_0
-                                     );
+                                     t_0);
             
             problem.SetParameterLowerBound(intrinsics, 0, 0);
-//             problem.SetParameterLowerBound(t_0, 0, 0);
             problem.SetParameterUpperBound(alphas[id], 0, 5000);
             problem.SetParameterLowerBound(alphas[id], 0, 0);
             problem.SetParameterUpperBound(betas[id], 0, 0);
             problem.SetParameterLowerBound(betas[id], 0, -3000);
-            
-//             problem.SetParameterBlockConstant(t_0);
-//             problem.SetParameterBlockConstant(alphas[id]);
-//             problem.SetParameterBlockConstant(betas[id]);
+            problem.SetParameterBlockConstant(t_0);
+
             for(int drop = 0; drop < BALL_DROPS; ++drop) {
-                
-                problem.SetParameterUpperBound(z_0, drop, 10);
                 problem.SetParameterLowerBound(z_0, drop, 0);
                 problem.SetParameterUpperBound(v_0, drop, 0);
                 
             }
-            //
-            if(iteration < 2) {
-//               problem.SetParameterBlockConstant(alphas[id]);
-//                           problem.SetParameterBlockConstant(betas[id]);
-//                                 problem.SetParameterBlockConstant(intrinsics);
-//                                 problem.SetParameterBlockConstant(px);
-//                                 problem.SetParameterBlockConstant(py);
-              
-                
-            }
-            
             if(iteration < 3) {
               problem.SetParameterBlockConstant(k1);
               problem.SetParameterBlockConstant(k2);
               problem.SetParameterBlockConstant(p1);
               problem.SetParameterBlockConstant(p2);
-              
-//                 
-                
             }
             if(iteration < 4) {
               problem.SetParameterBlockConstant(z_0);
             }
-            if(iteration < 5) {
+            if(iteration < 7) {
               problem.SetParameterBlockConstant(v_0);
             }
         }
@@ -577,8 +551,8 @@ Eigen::Vector3d getContactPoint(int px, int py) {
                                                 estimatedWorldLocation.y(),
                                                 estimatedWorldLocation.z());
     
-    double rotation[] = {0.147620,0.988969,0.011928,-0.002536};
-    double t[] = {translation.x(), translation.y(), translation.z()};
+//     double rotation[] = {0.147620,0.988969,0.011928,-0.002536};
+//     double t[] = {translation.x(), translation.y(), translation.z()};
     //    Visualize("../newField.jpg",
     //              intrinsics[0], intrinsics[1], intrinsics[2],0, 0, 0, 0,
     //              rotation, t);
@@ -778,11 +752,12 @@ void getTestImagePoints(vector<pair<Vector2d, int>> *image_locations, vector<Vec
 
 double GetZ(int frame_number, double max_time, double frame_rate, double accel) {
   double z = accel/2 * pow((max_time - (frame_number / frame_rate)),2);
-    return z; // Temporarily converting meters to mm
+    return z; 
 }
 
 void GenerateBallDrop(vector<pair<Vector2d, int>> *image_locations, vector<Vector3d> *world_locations) {
     
+    // Generation Parameters
     double focalLength = 402.546386;
     double pX = 467.818228;
     double pY = 318.845535;
@@ -790,17 +765,17 @@ void GenerateBallDrop(vector<pair<Vector2d, int>> *image_locations, vector<Vecto
     double translation[] = {-2138.434348,-1911.213759,2707};
     double g = 9800;
     double k1 = 0.05 , k2 = .02, p1 = -0.01, p2 = 0.01;
-    double max_frames = 70;
+    
     double frame_rate = 142;
-    cout << "TIME: " << max_frames / frame_rate << endl;
     double StartPointX[] = {2000,100,4000,3500, 500};
-    double StartPointY[] = {-1500,-100,-250,-1000, -700};
+    double StartPointY[] = {-1500,-1000,-250,-1000, -700};
     
     std::default_random_engine generator;
     std::normal_distribution<double> distribution(0.0,5.0);
     bool isNoise = false;
+    
     for(int pt = 0; pt < BALL_DROPS; ++pt) {
-        for(int i = 0; i < max_frames + 1; ++i) {
+        for(int i = 0; i < MAX_FRAMES; ++i) {
             double x_noise = 0;
             double y_noise = 0;
             if (isNoise) {
@@ -809,9 +784,13 @@ void GenerateBallDrop(vector<pair<Vector2d, int>> *image_locations, vector<Vecto
                 cout << "x_noise: " << x_noise << " Y_noise: " << y_noise << endl;
             }
             
-            double greatest_z = GetZ(0,  max_frames / frame_rate, frame_rate,g);
+            // Get the height that the ball will drop from given the MAX_FRAMES 
+            // and frame rate
+            double greatest_z = GetZ(0,  (MAX_FRAMES - 1) / frame_rate, 
+                frame_rate,g);
             double z = GetFallZ(double(i), frame_rate, greatest_z, 0.0);
             std::pair<Vector2d,int> temp;
+            
             Vector2d image_point = WorldToImage(Vector3d(StartPointX[pt],StartPointY[pt],z),
                                                 focalLength,
                                                 pX,
@@ -822,13 +801,15 @@ void GenerateBallDrop(vector<pair<Vector2d, int>> *image_locations, vector<Vecto
                                                 p2,
                                                 rotation,
                                                 translation);
-            //cout << Vector3d(StartPointX[pt],StartPointY[pt],z) << endl;
+            
             image_point[0] += x_noise;
             image_point[1] += y_noise;
             temp.first = image_point;
             temp.second = pt;
             image_locations->push_back(temp);
             world_locations->push_back(Vector3d(StartPointX[pt],StartPointY[pt],z));
+           
+            // Displaying the generated points 
             if (pt <  1) { 
               cout << "Last z: " << (*world_locations)[i * (pt + 1)] << endl;
               cout << "Calculated z: " << GetFallZ(double(i), 142.0, greatest_z, 0.0) << endl;
@@ -847,17 +828,13 @@ void GenerateBallDrop(vector<pair<Vector2d, int>> *image_locations, vector<Vecto
 }
 
 int main(int argc, char **argv) {
-    if (argc < 2) {
-        cout << "ERROR: need to specify at least.csv file"
-        << endl;
-    }
-    
+  
     google::InitGoogleLogging(argv[0]);
     
     vector<pair<Vector2d, int>> image_locations;
     vector<Vector3d> world_locations;
     pair<int, int> episode_conditions;
-    
+    /* // Block for loading image points from a file, probably outdated 
     for(int i=1;i < argc; ++i) {
         char* filePath = argv[i];
         episode_conditions = LoadImageLocations(argv[i], &image_locations);
@@ -869,6 +846,7 @@ int main(int argc, char **argv) {
         << contact_point.z() << ")" << endl;
         CalculateWorldLocations(episode_conditions, contact_point, &world_locations);
     }
+    */
     //getTestImagePoints(&image_locations, &world_locations);
     
     double* extrinsic_rotation = new double[4];
@@ -888,8 +866,6 @@ int main(int argc, char **argv) {
     vector<Vector3d> testWorldLocations;
     
     GenerateBallDrop(&testImageLocations,&testWorldLocations);
-    reverse(testWorldLocations.begin(), testWorldLocations.end());
-    reverse(testImageLocations.begin(), testImageLocations.end());
     TestGetFallZ(testWorldLocations);
     vector<double*> alphas;
     vector<double*> betas;
@@ -897,6 +873,7 @@ int main(int argc, char **argv) {
     double *v_0 = new double[BALL_DROPS];
     double *z_0 = new double[BALL_DROPS];
     double* t_0 = new double[BALL_DROPS];
+    // Initializing values of parameters to optimize
     for(int drop = 0; drop < BALL_DROPS; ++drop) {
         double *alpha = new double[2];
         double *beta = new double[2];
@@ -927,7 +904,6 @@ int main(int argc, char **argv) {
                  v_0,
                  t_0);
     
-    
     cout << "Generating visualization for estimated parameters..." << endl;
     Visualize("../simImage.jpg",
               intrinsics[0], intrinsics[1], intrinsics[2], k1, k2, p1,p2,
@@ -936,9 +912,9 @@ int main(int argc, char **argv) {
     cout << "Intrinsics and Distortion: " << intrinsics[0] << " "
     << intrinsics[1] << " " << intrinsics[2] << " "
     << k1 << " " << k2 << " " << p1 << " " << p2 << endl;
-    cout << "(alpha,beta,gamma):" << endl;
     for(int drop = 0; drop < BALL_DROPS; ++drop) {
-      cout << alphas[drop][0] << "," << betas[drop][0] << "," << z_0[drop] << "," << v_0[drop] <<  endl;
+      cout << "X: " << alphas[drop][0] << "\tY: " << betas[drop][0] << "\tZ: " 
+<<           z_0[drop] << "\tV_I: " << v_0[drop] <<  endl;
     }
     
     return 0;
