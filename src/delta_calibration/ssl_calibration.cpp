@@ -118,15 +118,16 @@ Vector2d WorldToImage(Vector3d point,
                                         point[1]));
 }
 
-template <class T> T GetFallZ(T frame_num, T frame_rate, T z_0, T v_i) {
-  T z = z_0 + v_i * (frame_num / frame_rate) + (T(1)/T(2)) * T(-9800) * 
-((frame_num / frame_rate) * (frame_num / frame_rate));
+template <class T> T GetFallZ(T frame_num, T frame_rate, T z_0, T v_i, T t_0) {
+  T time = t_0 + frame_num/frame_rate;
+  T z = z_0 + v_i * time + (T(1)/T(2)) * T(-9800) * 
+(time * time);
   return z; 
 }
 
-template <class T> T GetXY(T frame_num, T frame_rate, T xy_0, T v_i) {
+template <class T> T GetXY(T frame_num, T frame_rate, T xy_0, T v_i, T t_0) {
   v_i = T(0);
-  T xy =  xy_0 + v_i * (frame_num / frame_rate);
+  T xy =  xy_0 + v_i * (t_0 + (frame_num / frame_rate));
   return xy;
 }
 
@@ -168,11 +169,11 @@ struct ReprojectionError {
         
         // Transform by extrinstic matrix transform=
         T point_t[] = {
-//           T(world_point.x()),           
-          GetXY(T(frame_num), T(frame_rate),alpha[0], alpha[1]),
-          T(world_point.y()),
-//           GetXY(T(frame_num), T(frame_rate),beta[0], beta[1]),
-          GetFallZ(T(frame_num), T(frame_rate), z_0[id], v_0[id])};
+          T(world_point.x()),           
+//           GetXY(T(frame_num), T(frame_rate),alpha[0], alpha[1], t_0[id]),
+//           T(world_point.y()),
+          GetXY(T(frame_num), T(frame_rate),beta[0], beta[1], t_0[id]),
+          GetFallZ(T(frame_num), T(frame_rate), z_0[id], v_0[id], t_0[id])};
 //           T(world_point.z())};
 
         
@@ -292,11 +293,13 @@ void SSLCalibrate(const vector<pair<Vector2d, int>>& image_locations,
             problem.SetParameterLowerBound(alphas[id], 0, 0);
             problem.SetParameterUpperBound(betas[id], 0, 0);
             problem.SetParameterLowerBound(betas[id], 0, -3000);
-            problem.SetParameterBlockConstant(t_0);
+            
+//             problem.SetParameterBlockConstant(t_0);
 
             for(int drop = 0; drop < BALL_DROPS; ++drop) {
                 problem.SetParameterLowerBound(z_0, drop, 0);
                 problem.SetParameterUpperBound(v_0, drop, 0);
+                problem.SetParameterLowerBound(t_0, drop, 0);
                 
             }
             if(iteration < 3) {
@@ -307,9 +310,11 @@ void SSLCalibrate(const vector<pair<Vector2d, int>>& image_locations,
             }
             if(iteration < 4) {
               problem.SetParameterBlockConstant(z_0);
+              
             }
             if(iteration < 7) {
               problem.SetParameterBlockConstant(v_0);
+              problem.SetParameterBlockConstant(t_0);
             }
         }
         
@@ -788,7 +793,7 @@ void GenerateBallDrop(vector<pair<Vector2d, int>> *image_locations, vector<Vecto
             // and frame rate
             double greatest_z = GetZ(0,  (MAX_FRAMES - 1) / frame_rate, 
                 frame_rate,g);
-            double z = GetFallZ(double(i), frame_rate, greatest_z, 0.0);
+            double z = GetFallZ(double(i), frame_rate, greatest_z, 0.0, 0.0);
             std::pair<Vector2d,int> temp;
             
             Vector2d image_point = WorldToImage(Vector3d(StartPointX[pt],StartPointY[pt],z),
@@ -812,7 +817,7 @@ void GenerateBallDrop(vector<pair<Vector2d, int>> *image_locations, vector<Vecto
             // Displaying the generated points 
             if (pt <  1) { 
               cout << "Last z: " << (*world_locations)[i * (pt + 1)] << endl;
-              cout << "Calculated z: " << GetFallZ(double(i), 142.0, greatest_z, 0.0) << endl;
+              cout << "Calculated z: " << GetFallZ(double(i), 142.0, greatest_z, 0.0, 0.0) << endl;
             }
         }
     }
@@ -914,7 +919,7 @@ int main(int argc, char **argv) {
     << k1 << " " << k2 << " " << p1 << " " << p2 << endl;
     for(int drop = 0; drop < BALL_DROPS; ++drop) {
       cout << "X: " << alphas[drop][0] << "\tY: " << betas[drop][0] << "\tZ: " 
-<<           z_0[drop] << "\tV_I: " << v_0[drop] <<  endl;
+<<           z_0[drop] << "\tV_I: " << v_0[drop] << "\tT_0: " << t_0[drop] <<  endl;
     }
     
     return 0;
