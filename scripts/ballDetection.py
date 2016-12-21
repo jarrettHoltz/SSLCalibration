@@ -14,6 +14,12 @@ import cv2
 ap = argparse.ArgumentParser()
 ap.add_argument("-v", "--video",
     help="path to the (optional) video file")
+ap.add_argument("-f", "--fastforward",
+                help="fast forward to frame")
+ap.add_argument("-s", "--start",
+                help="start")
+ap.add_argument("-e", "--end",
+                help="end")
 ap.add_argument("-b", "--buffer", type=int, default=64,
     help="max buffer size")
 args = vars(ap.parse_args())
@@ -34,17 +40,25 @@ end_frame = 0
 # to the webcam
 if not args.get("video", False):
     camera = cv2.VideoCapture(0)
-
 # otherwise, grab a reference to the video file
 else:
     camera = cv2.VideoCapture(args["video"])
 frameNumber = 0
+forwardTo = 0
+if(args.get("fastforward", False)):
+    forwardTo = int(args["fastforward"])
+if(args.get("start", False)):
+    start_frame = int(args["start"])
+    forwardTo = start_frame
+if(args.get("end", False)):
+    end_frame = int(args["end"])
+
 # keep looping
 while True:
     frameNumber = frameNumber + 1
     # grab the current frame
     (grabbed, frame) = camera.read()
-
+    
     # if we are viewing a video and we did not grab a frame,
     # then we have reached the end of the video
     if args.get("video") and not grabbed:
@@ -104,6 +118,10 @@ while True:
 
     # show the frame to our screen
     cv2.imshow("Frame", frame)
+
+    if(frameNumber < forwardTo):
+        continue
+
     key = cv2.waitKey(0)
 
     if key == ord("p"):
