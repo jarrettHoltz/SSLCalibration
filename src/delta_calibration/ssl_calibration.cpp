@@ -26,7 +26,7 @@ using Eigen::Vector2f;
 using Eigen::Vector3f;
 using namespace cv;
 
-#define BALL_DROPS 5
+#define BALL_DROPS 4
 #define MAX_FRAMES 96
 
 void Visualize(const char* filePath,
@@ -285,8 +285,8 @@ void SSLCalibrate(const vector<pair<Vector2d, int>>& image_locations,
             problem.SetParameterLowerBound(Y[id], 0, -3000);
             
             problem.SetParameterLowerBound(Z[id], 0, 0);
-            //problem.SetParameterUpperBound(V[id], 0, 0);
             problem.SetParameterLowerBound(t_0[id], 0, 0);
+            problem.SetParameterUpperBound(V[id], 2, 0);
             
             if(iteration < 3) {
                 problem.SetParameterBlockConstant(k1);
@@ -298,9 +298,8 @@ void SSLCalibrate(const vector<pair<Vector2d, int>>& image_locations,
                 problem.SetParameterBlockConstant(Z[id]);
             }
             
-            problem.SetParameterBlockConstant(V[id]);
             if(iteration < 7) {
-                //problem.SetParameterBlockConstant(V[id]);
+                problem.SetParameterBlockConstant(V[id]);
                 problem.SetParameterBlockConstant(t_0[id]);
             }
         }
@@ -711,8 +710,8 @@ int main(int argc, char **argv) {
     vector<pair<Vector2d, int>> testImageLocations;
     vector<Vector3d> testWorldLocations;
     
-    //GenerateBallDrop(&testImageLocations,&testWorldLocations);
-    GenerateParabola(&testImageLocations,&testWorldLocations);
+    GenerateBallDrop(&testImageLocations,&testWorldLocations);
+    //GenerateParabola(&testImageLocations,&testWorldLocations);
     
     vector<double*> X;
     vector<double*> Y;
