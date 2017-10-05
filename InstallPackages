@@ -27,16 +27,10 @@ else
     sudo apt-get install libgoogle-glog-dev libgflags-dev || \
 	{ echo 'Error: glog and gflags installation failed' >&2; exit 1; }
 fi
-pushd ../cobot_python/task_dialog && python installMaxent.py  || \
-    { echo 'Error: installMaxent failed' >&2; exit 1; }
-popd
 pushd src/libraries/CRF++-0.58 && ./configure &&\
     make -j`nproc` && sudo make install && cd python &&\
     sudo python setup.py install || \
     { echo 'Error: crfpp failed' >&2; exit 1; }
-popd
-pushd src/libraries/re2 && make -j`nproc` && sudo make install || \
-    { echo 'Error: re2 failed' >&2; exit 1; }
 popd
 pushd src/libraries/ceres-solver && mkdir -p build && cd build && cmake .. && \
     sudo make install -j`nproc` || \

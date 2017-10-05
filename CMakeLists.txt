@@ -1,4 +1,4 @@
-PROJECT(delta_calibration)
+PROJECT(ssl_calibration)
 CMAKE_MINIMUM_REQUIRED(VERSION 2.6)
 
 SET(arch ${})
@@ -40,7 +40,7 @@ SET(LIBRARY_OUTPUT_PATH ${PROJECT_SOURCE_DIR}/lib)
 SET(QT_USE_QTNETWORK true)
 SET(QT_USE_QTOPENGL true)
 
-OPTION(CALIBRATION_TARGETS "Enable complication of delta-calibration" FALSE)
+OPTION(CALIBRATION_TARGETS "Enable complication of ssl-calibration" FALSE)
 
 
 find_package(OpenCV REQUIRED)
@@ -58,42 +58,11 @@ INCLUDE_DIRECTORIES(${PROJECT_BINARY_DIR})
 INCLUDE_DIRECTORIES(${PROJECT_SOURCE_DIR})
 INCLUDE_DIRECTORIES(${PROJECT_SOURCE_DIR}/src)
 INCLUDE_DIRECTORIES(${PROJECT_SOURCE_DIR}/src/libraries)
-INCLUDE_DIRECTORIES(${PROJECT_SOURCE_DIR}/src/delta_calibration)
-INCLUDE_DIRECTORIES(${PROJECT_SOURCE_DIR}/src/shared/math)
-INCLUDE_DIRECTORIES(${PROJECT_SOURCE_DIR}/src/shared/util)
-IF(CALIBRATION_TARGETS)
-  add_subdirectory(${PROJECT_SOURCE_DIR}/src/delta_calibration)
-ENDIF(CALIBRATION_TARGETS)
+INCLUDE_DIRECTORIES(${PROJECT_SOURCE_DIR}/src/ssl_calibration)
+add_subdirectory(${PROJECT_SOURCE_DIR}/src/ssl_calibration)
+
 INCLUDE_DIRECTORIES(${LUA_INCLUDE_DIR})
 
 SET(libs roslib roscpp ncurses popt pthread  glut
      ${LUA_LIBRARIES} rt
     ${BUILD_SPECIFIC_LIBRARIES} glog rosbag X11)
-
-
-SET(SHARED_SRCS
-  src/shared/util/pthread_utils.cpp
-  src/shared/util/configreader.cpp
-)
-
-SET(PERCEPTION_SRCS
-  src/perception_tools/perception_2d.cpp
-  #src/delta_calibration/icp.cpp
-)
-
-SET(FSPF_SRCS
-  src/fspf/grahams_scan.cpp
-  src/fspf/plane_filtering.cpp
-  src/fspf/plane_polygon.cpp
-)
-ADD_LIBRARY(shared_libraries SHARED ${SHARED_SRCS} ${HW_SRCS})
-ADD_DEPENDENCIES(shared_libraries rosbuild_precompile)
-TARGET_LINK_LIBRARIES(shared_libraries shared_libraries ${libs})
-
-ADD_LIBRARY(fspf_library ${FSPF_SRCS})
-ADD_DEPENDENCIES(fspf_library shared_libraries)
-TARGET_LINK_LIBRARIES(fspf_library shared_libraries ${libs})
-
-# ADD_LIBRARY(perception_library ${PERCEPTION_SRCS})
-# ADD_DEPENDENCIES(perception_library shared_libraries)
-# TARGET_LINK_LIBRARIES(perception_library shared_libraries ${libs})
